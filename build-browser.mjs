@@ -12,4 +12,4 @@ await esbuild.build({
 
 });
 
-await esbuild.build({ entryPoints: ["rogue.js"], bundle: true, outfile: "build/rogue.bundle.js", format: "iife", platform: "browser", sourcemap: true, minify: true, logLevel: "info" });
+await esbuild.build({ entryPoints: ["rogue.js"], bundle: true, outfile: "build/rogue.bundle.js", format: "iife", platform: "browser", sourcemap: false, minify: true, logLevel: "info" });
