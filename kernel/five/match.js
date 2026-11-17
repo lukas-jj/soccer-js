@@ -3,6 +3,8 @@ const {Settings}=require('../settings.js');
 const {Time}=require('../core/lib/time.js');
 const {getArchetypeFullValues}=require('../core/lib/ai_archetypes.js');
 const {FiveInput}=require('./input.js');
+const {PlayerStates,isGkProtected}=require('../core/entities/player.js');
+const {estimatePassGroundSpeed,isPassSafeFromAllOpponents}=require('../core/lib/pass_safety.js');
 const CHARACTERS=[
  {id:'price',name:'Daniel Price',short:'PRICE',number:4,role:'DEFENDER',slot:1,color:'#63d4e8',skin:'#b77c55',hair:'#251e20',strength:'TACKLING',stats:{speed:74,stamina:90,passing:77,dribbling:67,shooting:63,tackling:94,goalkeeping:18,accuracy:79}},
  {id:'cole',name:'Marcus Cole',short:'COLE',number:7,role:'WINGER',slot:2,color:'#ffb94f',skin:'#875536',hair:'#17171b',strength:'PACE',stats:{speed:96,stamina:84,passing:75,dribbling:90,shooting:78,tackling:63,goalkeeping:15,accuracy:80}},
@@ -31,6 +33,50 @@ class FiveSimulator extends Simulator {
   const keeper={...BASE,jersey:1,goalkeeping:90,traits:[]};
   this.teamStatsPreset={HOME:[keeper,...CHARACTERS.map(c=>({...c.stats,jersey:c.number,traits:[]}))],AWAY:Array.from({length:5},(_,i)=>({...BASE,jersey:i+1,goalkeeping:i===0?88:15,traits:[]}))};
  }
+ requestHumanPass(){
+  this._humanCallUntil=Time.time+3;
+  this.callFeedback('CALLING');
+ }
+ callFeedback(text){this.humanCallFeedback={text,until:Time.time+1.8};}
+ humanOutlet(carrier,requested=false){
+  const receiver=this.lockedHumanPlayer;
+  if(!receiver||receiver.isSentOff||!carrier||carrier===receiver||carrier.team!=='A')return null;
+  const distance=Math.hypot(receiver.x-carrier.x,receiver.y-carrier.y);
+  if(distance<2){if(requested)this.callFeedback('MAKE SPACE');return null;}
+  if(distance>32){if(requested)this.callFeedback('MOVE CLOSER');return null;}
+  // Prefer feet: the user controls their own run, not an AI support destination.
+  const from={x:carrier.x,y:carrier.y},aim={x:receiver.x,y:receiver.y};
+  const passType=distance>18?'long':'short';
+  const speed=estimatePassGroundSpeed(from,aim,carrier,passType);
+  if(!isPassSafeFromAllOpponents(from,aim,receiver,this.teamA.getOpponentPool(),speed)){
+   if(requested)this.callFeedback('GET OPEN');return null;
+  }
+  return {teammate:receiver,type:passType,aim};
+ }
+ updatePlayerAIStates(){
+  const carrier=this.ball.owner,receiver=this.lockedHumanPlayer;
+  if(carrier!==this._humanCarrier){this._humanCarrier=carrier;this._humanCarrierSince=Time.time;}
+  const requested=(this._humanCallUntil||0)>Time.time;
+  if(this.matchState==='play'&&this.setPieceType===''&&receiver){
+   if(this.teamA.receivingPlayer===receiver&&!carrier){if(requested)this.callFeedback('PASS COMING');}
+   else if(carrier&&carrier.team==='A'&&carrier!==receiver){
+    const state=carrier.fsm.getNameOfCurrentState();
+    const busy=['Pass','Shoot','Header'].includes(state)||carrier.actionTimer>0||(carrier.role==='GK'&&isGkProtected(carrier));
+    const natural=!requested&&Time.time-this._humanCarrierSince>=.45&&Time.time>=(this._nextHumanOutlet||0)&&!(carrier.lastPassFrom===receiver&&carrier.passLinkCooldown>0);
+    if(!busy&&(requested||natural)){
+     const decision=this.humanOutlet(carrier,requested);
+     if(decision){
+      carrier.passTarget=receiver;carrier.passType=decision.type;carrier.passAim=decision.aim;
+      carrier.fsm.changeState(PlayerStates.Pass);
+      this._humanCallUntil=0;this._nextHumanOutlet=Time.time+1.2;
+      if(requested)this.callFeedback('PASS COMING');
+     }
+    }
+   }else if(requested&&carrier===receiver){this._humanCallUntil=0;this.callFeedback('ON THE BALL');}
+   else if(requested)this.callFeedback('WIN POSSESSION');
+  }
+  super.updatePlayerAIStates();
+ }
  updateHTMLStats(){}
  updateScrubberUI(){}
  // No offside in this small-sided ruleset; all other restarts use the engine.
@@ -49,6 +95,13 @@ class FiveMatch {
   match.sim.teamA.players.forEach((p,i)=>{p.name=i?CHARACTERS[i-1].short:'TURNER';if(i)p.characterId=CHARACTERS[i-1].id;});
   const away=['SILVA','HUGHES','CLARKE','ROSSI','NOVAK'];match.sim.teamB.players.forEach((p,i)=>p.name=away[i]);
   match.player=match.sim.teamA.players[character.slot];match.sim.lockedHumanPlayer=match.player;match.sim.manualInput=match.input;
+  const choosePass=match.sim.teamA.findBestPassTarget.bind(match.sim.teamA);
+  match.sim.teamA.findBestPassTarget=(carrier,opts={})=>{
+   const target=match.sim.humanOutlet(carrier);
+   const giveAndGo=carrier.lastPassFrom===match.player&&carrier.passLinkCooldown>0;
+   if(target&&!giveAndGo&&(!opts.passType||opts.passType===target.type))return target;
+   return choosePass(carrier,opts);
+  };
   return match;
  }
  get finished(){return this.sim.matchState==='fulltime';}

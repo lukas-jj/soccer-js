@@ -183,8 +183,13 @@ npm run dev
 | K / Space / right mouse | Shoot; shoulder tackle when defending |
 | L | Lob; slide tackle when defending |
 | Shift | Sprint |
-| E | Call for a pass (teammate checks whether the lane is safe) |
+| E | Call for a pass (queued for 3 seconds; safe backward passes allowed) |
 | Escape | Pause / resume |
+
+Teammates look for your actual position and favor an open pass to you. E queues a
+request while the carrier finishes a committed action. Feedback shows PASS COMING,
+GET OPEN, MOVE CLOSER or WIN POSSESSION. Possession still changes through a real
+pass, interception or first touch.
 
 Hold and release pass, lob or shoot to set power. Without a mouse, movement sets
 your aim. Touch devices have a movement stick and pass, shoot, lob, sprint and

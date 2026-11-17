@@ -1521,7 +1521,10 @@ function tickManualControl(sim, opts = {}) {
             }
             applyHumanCommand(chosen, { ...cmd, switchPlayer: false }, sim, 'A');
             chosen.isActivePlayer = true;
-            if (cmd.callPass && sim.teamA) sim.teamA.requestPass(chosen);
+            if (cmd.callPass && sim.teamA) {
+                if (typeof sim.requestHumanPass === 'function') sim.requestHumanPass();
+                else sim.teamA.requestPass(chosen);
+            }
         }
         sim._manualControlled.A = chosen;
         recordManualInput(sim, cmd);

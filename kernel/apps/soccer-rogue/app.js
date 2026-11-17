@@ -4,6 +4,7 @@ const {Application}=require('../../engine.js');
 const {Utils}=require('../../core/lib/utils.js');
 const {Pitch}=require('../../core/entities/pitch.js');
 const {SoundDB}=require('../../core/lib/sounddb.js');
+const {Time}=require('../../core/lib/time.js');
 const $=id=>document.getElementById(id);
 let match=null,input=null,paused=false,loading=false,lastFrame=0,accumulator=0,preview=null,selected='cole',sound=true,view='select',raf=0,stickPointer=null,stickOrigin=null;
 const cleanups=[];
@@ -20,7 +21,7 @@ function showSelection(){
  $('message').textContent='';
  }
 function hud(){
- $('hud').innerHTML=`<div class="hud-brand">S<span>/</span>5</div><div class="scoreboard"><span class="team-label home">GOLD</span><b id="home-score">0</b><span class="score-divider">:</span><b id="away-score">0</b><span class="team-label away">BLUE</span><time id="clock">3:00</time></div><div class="hud-actions"><button data-action="sound" id="sound" aria-label="Mute sound">${icon(sound?'sound':'muted')}</button><button data-action="fullscreen" aria-label="Toggle fullscreen">${icon('expand')}</button><button data-action="pause" aria-label="Pause match">${icon('pause')}</button></div><div class="player-hud"><span class="player-number">${match.character.number}</span><div><b>${match.character.short}</b><span id="direction">ATTACK →</span></div><div class="condition-bars"><div class="stamina-track" title="Stamina"><span id="stamina"></span></div><div class="charge-track" title="Kick power"><span id="charge"></span></div></div></div><div class="desktop-controls"><span><kbd>J</kbd> PASS / TACKLE</span><span><kbd>K</kbd> SHOOT</span><span><kbd>L</kbd> LOB / SLIDE</span><span><kbd>E</kbd> CALL</span><span><kbd>⇧</kbd> SPRINT</span></div><div id="announcement" aria-live="polite"></div>`;
+ $('hud').innerHTML=`<div class="hud-brand">S<span>/</span>5</div><div class="scoreboard"><span class="team-label home">GOLD</span><b id="home-score">0</b><span class="score-divider">:</span><b id="away-score">0</b><span class="team-label away">BLUE</span><time id="clock">3:00</time></div><div class="hud-actions"><button data-action="sound" id="sound" aria-label="Mute sound">${icon(sound?'sound':'muted')}</button><button data-action="fullscreen" aria-label="Toggle fullscreen">${icon('expand')}</button><button data-action="pause" aria-label="Pause match">${icon('pause')}</button></div><div class="player-hud"><span id="call-feedback" role="status" aria-live="polite"></span><span class="player-number">${match.character.number}</span><div><b>${match.character.short}</b><span id="direction">ATTACK →</span></div><div class="condition-bars"><div class="stamina-track" title="Stamina"><span id="stamina"></span></div><div class="charge-track" title="Kick power"><span id="charge"></span></div></div></div><div class="desktop-controls"><span><kbd>WASD</kbd> MOVE</span><span><kbd>J</kbd> PASS / TACKLE</span><span><kbd>K</kbd> SHOOT</span><span><kbd>L</kbd> LOB / SLIDE</span><span><kbd>E</kbd> CALL</span><span><kbd>⇧</kbd> SPRINT</span></div><div id="announcement" aria-live="polite"></div>`;
  $('hud').hidden=false;
  $('touch').hidden=false;
 }
@@ -96,6 +97,8 @@ function updateHud(){
  $('stamina').style.width=`${match.player.currentStamina*100}%`;
  const charge=s._manualCharge;$('charge').style.width=`${charge?Math.min(100,charge.ticks*.05/.6*100):0}%`;
  $('direction').textContent=s.isSecondHalf()?'← ATTACK':'ATTACK →';
+ const feedback=s.humanCallFeedback;const callText=feedback&&feedback.until>Time.time?feedback.text:'';
+ if($('call-feedback').textContent!==callText)$('call-feedback').textContent=callText;
  const labels={kickoff:'KICK OFF',goal:s.goalScoredTeam==='A'?'GOAL!':'BLUE SCORES',halftime:'HALF TIME · SWITCH ENDS',corner:'CORNER',throwin:'THROW IN',freekick:'FREE KICK',goalkick:'GOAL KICK',penalty:'PENALTY',foul:'FOUL',card:s.cardType==='red'?'RED CARD':'YELLOW CARD'};
  const label=labels[s.matchState]||'';
  if($('announcement').textContent!==label)$('announcement').textContent=label;

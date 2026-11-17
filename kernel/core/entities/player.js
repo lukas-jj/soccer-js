@@ -609,6 +609,8 @@ function computeDribbleTarget(player) {
  * Actual kick aims come from Team.getBestPassToReceiver (tangents + safety).
  */
 function getPassReceiverPosition(teammate, carrier, level) {
+    // A fixed human avatar does not run to the AI's predicted formation-support spot.
+    if (level && level.lockedHumanPlayer === teammate) return { x: teammate.x, y: teammate.y };
     const support = computeAttackSupportTarget(teammate, carrier, level);
     return {
         x: teammate.x * 0.25 + support.x * 0.75,
