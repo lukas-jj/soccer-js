@@ -1173,7 +1173,7 @@ class Simulator extends GameObject {
 
     setupTeam(teamKey, teamName, formationName) {
         const formation = this.formationsPreset[formationName];
-        if (!formation || formation.length !== 11) {
+        if (!formation || formation.length !== (this.playersPerTeam || 11)) {
             const available = Object.keys(this.formationsPreset || {}).sort().join(', ');
             throw new Error(`Unknown or invalid formation "${formationName}" (available: ${available || 'none'})`);
         }
@@ -1202,6 +1202,7 @@ class Simulator extends GameObject {
 
         team.createPlayers({
             formation,
+            playerCount: this.playersPerTeam || 11,
             teamStatsList,
             defaultStats: this.defaultStats || {},
             code

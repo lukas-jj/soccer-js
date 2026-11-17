@@ -88,6 +88,10 @@ function orientationDir(player) {
  * @returns {{ x: number, y: number }}
  */
 function humanFacingDir(player, cmd, charge) {
+    if (cmd && Math.hypot(cmd.aimX || 0, cmd.aimY || 0) > 1e-4) {
+        const length = Math.hypot(cmd.aimX || 0, cmd.aimY || 0);
+        return { x: (cmd.aimX || 0) / length, y: (cmd.aimY || 0) / length };
+    }
     if (cmd && (Math.abs(cmd.moveX) > 1e-4 || Math.abs(cmd.moveY) > 1e-4)) {
         const len = Math.sqrt(cmd.moveX * cmd.moveX + cmd.moveY * cmd.moveY);
         if (len > 1e-6) return { x: cmd.moveX / len, y: cmd.moveY / len };
@@ -117,6 +121,10 @@ function humanFacingDir(player, cmd, charge) {
  */
 function updateChargeAim(charge, player, cmd) {
     if (!charge) return;
+    if (cmd && Math.hypot(cmd.aimX || 0, cmd.aimY || 0) > 1e-4) {
+        const aim = humanFacingDir(player, cmd, null);
+        charge.aimX = aim.x; charge.aimY = aim.y; return;
+    }
     if (cmd && (Math.abs(cmd.moveX) > 1e-4 || Math.abs(cmd.moveY) > 1e-4)) {
         const len = Math.sqrt(cmd.moveX * cmd.moveX + cmd.moveY * cmd.moveY);
         if (len > 1e-6) {
@@ -321,6 +329,7 @@ function getControllablePlayers(sim, teamKey) {
 function resolveControlledPlayer(sim, teamKey, prev) {
     const pool = getControllablePlayers(sim, teamKey);
     if (!pool.length) return null;
+    if (sim.lockedHumanPlayer) return pool.includes(sim.lockedHumanPlayer) ? sim.lockedHumanPlayer : null;
 
     const ball = sim.ball;
     if (ball && ball.owner && ball.owner.team === teamKey && pool.includes(ball.owner)) {
@@ -1484,7 +1493,7 @@ function tickManualControl(sim, opts = {}) {
         return;
     }
 
-    const keyboard = opts.keyboard || gameKeyboard;
+    const keyboard = opts.keyboard || sim.manualInput || gameKeyboard;
     const frame = typeof keyboard.pollFrame === 'function'
         ? keyboard.pollFrame()
         : { command: { moveX: 0, moveY: 0 } };
@@ -1498,6 +1507,27 @@ function tickManualControl(sim, opts = {}) {
 
     if (!sim._manualControlled) {
         sim._manualControlled = { A: null, B: null };
+    }
+
+    // Character mode: possession, pass reception and switch keys never replace the avatar.
+    if (sim.lockedHumanPlayer) {
+        sim._manualPendingReceiver = null;
+        sim._manualPassSwitchTicks = 0;
+        const chosen = resolveControlledPlayer(sim, 'A', sim.lockedHumanPlayer);
+        if (chosen) {
+            chosen.humanControlled = true;
+            if (['Wait', 'Receive', 'GoHome'].includes(stateName(chosen))) {
+                chosen.fsm.changeState(getPlayerStates().Idle);
+            }
+            applyHumanCommand(chosen, { ...cmd, switchPlayer: false }, sim, 'A');
+            chosen.isActivePlayer = true;
+            if (cmd.callPass && sim.teamA) sim.teamA.requestPass(chosen);
+        }
+        sim._manualControlled.A = chosen;
+        recordManualInput(sim, cmd);
+        if (manualOpts().cameraFollow !== false) updateManualCameraFollow(sim, chosen);
+        else sim._manualCameraActive = false;
+        return;
     }
 
     // Sticky receiver after auto-switch (until they get the ball or timeout).

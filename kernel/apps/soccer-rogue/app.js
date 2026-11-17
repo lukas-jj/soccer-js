@@ -1,159 +1,166 @@
-const C=require('../../rogue/career.js');
-const P=require('../../rogue/players.js');
-const D=require('../../rogue/data.js');
-const {careerMatch,simulateOther,registerKits}=require('../../rogue/match.js');
+const {FiveMatch,CHARACTERS,configureFive,loadKits}=require('../../five/match.js');
 const {Settings}=require('../../settings.js');
 const {Application}=require('../../engine.js');
 const {Utils}=require('../../core/lib/utils.js');
-const KEY='soccer-rogue-v1';
+const {Pitch}=require('../../core/entities/pitch.js');
+const {SoundDB}=require('../../core/lib/sounddb.js');
 const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=n=>`${Math.round(n).toLocaleString()} cr`;
-const title=s=>s.charAt(0).toUpperCase()+s.slice(1);
-const weather=w=>({fine:'☀ Fine',rainy:'☂ Rain',snowy:'❄ Snow'}[w]||w);
-let state=null,view='club',live=null,paused=false,speed=8,busy=false,lastSave=0,raf=0,accumulator=0,lastFrame=0;
-function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
-function persist(){if(!state)return;try{localStorage.setItem(KEY,C.encodeSave(state));}catch(e){notice(`Could not save: ${e.message}. Export your career below.`,true);}}
-function btn(label,action,data='',disabled=false,cls=''){return `<button class="${cls}" data-action="${action}" ${data} ${disabled?'disabled':''}>${label}</button>`;}
-function options(list,value){return list.map(([v,t])=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(t)}</option>`).join('');}
-function playerOptions(players,selected){return options(players.map(p=>[p.id,`${p.name} · ${p.archetype}${p.injury?' · INJURED':''}`]),selected);}
-function actionAllowed(){return state.phase==='prep'&&state.prepLeft>0&&!busy;}
-function startScreen(){
- $('rogue').innerHTML=`<section class="hero"><p class="eyebrow">ONE CLUB. THREE DIVISIONS. YOUR STORY.</p><h1>From the district.<br><em>To the extraordinary.</em></h1><p>Build a squad. Take a chance. Watch your decisions come alive on the pitch.</p></section><div class="section-title"><h2>Choose your club</h2><span>A permanent identity. A fresh start.</span></div><div class="clubs">${D.CLUBS.map((c,i)=>`<article class="club" style="--club:${c.color}"><div class="crest">${['⚓','✦','▲'][i]}</div><p class="eyebrow">FOUNDING CLUB ${String(i+1).padStart(2,'0')}</p><h2>${c.name}</h2><p>${c.description}</p><div class="perk"><b>${D.CLUB_PERKS[c.perk].name}</b><p>${D.CLUB_PERKS[c.perk].description}</p></div>${btn('Take the reins →','new',`data-id="${c.id}"`,false,'primary')}</article>`).join('')}</div><section class="panel onboarding"><h2>Your first season</h2><p>Prepare for each fixture over three days. Training raises attributes directly; matches earn XP and your choice of level upgrades. Rotate tired players, balance the books and finish first to climb. Finish last in the bottom division or fail to pay fixture costs and the run ends.</p><p>Four clubs per division, three fixtures per season. Start with 2,600 credits. No wages or contracts.</p></section>`;
-}
-function nav(){return `<nav aria-label="Career panels">${[['club','Clubhouse'],['squad','Squad & tactics'],['training','Training & staff'],['recruits','Recruitment'],['shop','Shop & inventory'],['table','League']].map(([k,label])=>btn(label,'nav',`data-view="${k}" aria-current="${view===k?'page':'false'}"`,false,view===k?'active':'')).join('')}</nav>`;}
-function render(){
- if(!state){startScreen();return;}
- const s=state,c=D.CLUBS.find(c=>c.id===s.clubId);
- $('rogue').innerHTML=`<section class="clubhead" style="--club:${c.color}"><div><p class="eyebrow">SEASON ${s.season} / ${D.DIVISIONS[s.division]}</p><h1>${esc(s.clubName)}</h1><span>${s.perks.map(k=>`<span class="tag" title="${esc(D.CLUB_PERKS[k].description)}">${D.CLUB_PERKS[k].name}</span>`).join(' ')}</span></div><div class="balance"><small>CLUB BALANCE</small><strong>${money(s.money)}</strong><small>${s.squad.length}/${D.CONFIG.squadMax} PLAYERS · DAY ${s.day}</small></div></section>${s.phase==='match'?'':nav()}<div id="content"></div><details class="save-tools"><summary>Save & run controls</summary><p>Automatically saved after every decision. A live match resumes from its saved seed and command history.</p>${btn('Export save','export')}${btn('Import save','import')}${btn('New run / Reset','reset')}<input id="save-file" type="file" accept="application/json" hidden></details>`;
- const content=$('content');
- if(s.phase==='match'){content.innerHTML=matchPanel();return;}
- if(['victory','gameover','season'].includes(s.phase)){content.innerHTML=endingPanel();return;}
- if(s.phase==='results'){content.innerHTML=reportPanel()+btn('Resolve league round →','round','',busy,'primary');return;}
- content.innerHTML=({club:dashboard,squad:squadPanel,training:trainingPanel,recruits:recruitPanel,shop:shopPanel,table:tablePanel}[view]||dashboard)();
-}
-function dashboard(){
- const s=state,o=C.nextOpponent(s),round=s.round+1;
- return `<div class="dashboard"><section class="fixture panel"><p class="eyebrow">NEXT FIXTURE · ROUND ${round}/${s.schedule.length}</p><h2>${esc(s.clubName)}<span class="versus">vs</span>${esc(o.name)}</h2><div class="fixture-meta"><span>${weather(s.forecast)}</span><span>${s.formation} · ${title(s.tactic.replaceAll('_',' '))}</span><span>3 substitutions</span></div><p>Expected gate ${money(C.price(s,D.CONFIG.gate))} · Operating costs ${money(C.price(s,D.CONFIG.upkeep))} · Win bonus ${money(C.price(s,D.CONFIG.winBonus))}</p>${s.prepLeft===0?btn('Enter the match →','match','',busy,'primary'): `<div class="day-track">${Array.from({length:D.CONFIG.prepDays},(_,i)=>`<span class="${i<D.CONFIG.prepDays-s.prepLeft?'done':''}">Day ${i+1}${i<D.CONFIG.prepDays-s.prepLeft?' ✓':''}</span>`).join('')}</div><p>${s.prepLeft} preparation ${s.prepLeft===1?'day':'days'} remaining. One main activity per day; selection and staff are free to manage.</p>`}</section><section class="panel"><p class="eyebrow">SQUAD READINESS</p><div class="readiness"><strong>${s.squad.filter(p=>!p.injury&&p.fatigue<50).length}</strong><span>fit and fresh</span><strong>${s.squad.filter(p=>p.injury).length}</strong><span>injured</span></div>${btn('Manage squad →','nav','data-view="squad"')}${s.squad.some(p=>p.pending.length)?'<p class="highlight">Level upgrades await your choice in Squad.</p>':''}</section></div><div class="section-title"><h2>Make today count</h2><span>${s.prepLeft?`Choose your next activity`:'Preparation complete'}</span></div><div class="activities">${[['Train','Direct attribute gains, at a fatigue cost.','nav','training'],['Rest','Restore squad fatigue.','rest',''],['Scout','3 uncertain prospects; cheaper recruitment.','scout',''],['Transfer Market','6 fully assessed players; higher fees.','market',''],['Shop','Buy recovery and curse-care supplies.','visit-shop','']].map(([name,desc,act,v])=>`<article class="panel"><h3>${name}</h3><p>${desc}</p>${btn(name==='Train'?'Choose session →':'Spend a day →',act,v?`data-view="${v}"`:'',!actionAllowed())}</article>`).join('')}</div><section class="panel"><h2>Club journal</h2><ul class="journal">${s.events.slice(-8).reverse().map(e=>`<li>${esc(e)}</li>`).join('')}</ul></section>${reportPanel(true)}`;
-}
-function squadPanel(){
- const s=state;return `<section class="panel"><div class="section-title"><h2>Your match plan</h2><span>Changes cost no preparation days</span></div><div class="controls"><label>Formation<select id="formation">${options(Object.keys(D.FORMATIONS).map(f=>[f,f]),s.formation)}</select></label><label>Tactical style<select id="tactic">${options(Object.entries(require('../../../presets/ai_archetypes.json')).map(([k,v])=>[k,v.label]),s.tactic)}</select></label></div><p>Archetypes are stat distributions, not positions. Anyone can play anywhere. Actual minutes grow proficiency independently in GK, defence, midfield and forward. Goalkeeping ability remains essential in goal.</p><div class="lineup">${D.FORMATIONS[s.formation].map((slot,i)=>`<label><b>${slot.role}</b><select data-slot="${i}" aria-label="${slot.role} starter">${playerOptions(s.squad,s.lineup[i])}</select></label>`).join('')}</div></section><div class="section-title"><h2>The squad</h2><span>${s.squad.length} players · injured players cannot start</span></div><div class="players">${s.squad.map(playerCard).join('')}</div>`;
-}
-function playerCard(p){
- const s=state;return `<article class="player panel"><div class="player-heading"><div><span class="tag">${s.lineup.includes(p.id)?'STARTER':'BENCH'}</span><h3>${esc(p.name)}</h3><small>${p.archetype}</small></div><span class="level">LV ${p.level}</span></div><div class="xp"><span style="width:${100*p.xp/(D.CONFIG.xpLevel*p.level)}%"></span></div><small>${Math.round(p.xp)} / ${D.CONFIG.xpLevel*p.level} XP · ${p.pending.length} upgrade(s) pending</small><div class="stats">${D.STATS.map(k=>`<div><span>${title(k)}</span><b>${p.stats[k].toFixed(1)}</b><meter min="0" max="100" value="${p.stats[k]}" aria-label="${k}"></meter></div>`).join('')}</div><div class="condition ${p.fatigue>60?'warning':''}">Fatigue <b>${Math.round(p.fatigue)} / 100</b> · ${p.injury?`<strong>${p.injury.name}: ${p.injury.days} day(s) out${s.staff.includes('medic')?' · medic doubles healing':''}</strong>`:'Fit to play'}</div><details><summary>Position experience & traits</summary><p>${['GK','DF','MF','FW'].map(k=>`${k}: ${P.proficiency(p,k).toFixed(1)}% (${Math.round(p.minutes[k])} min)`).join('<br>')}</p><p>Proficiency adds up to 15 percentage points to effective attributes in that position. Fatigue further reduces them.</p>${[...p.perks,...p.curses].map(k=>`<p class="trait ${D.TRAITS[k].kind}"><b>${D.TRAITS[k].name}</b> · ${D.TRAITS[k].description}${p.curses.includes(k)&&p.reliefUntil>s.day?' (suppressed)':''}</p>`).join('')||'<p>No perks or curses.</p>'}</details>${p.pending.length?`<div class="upgrades"><b>Choose level upgrade</b>${p.pending[0].map((c,i)=>btn(`+${c.gain} ${title(c.stat)}`,'upgrade',`data-id="${p.id}" data-choice="${i}"`)).join('')}</div>`:''}${!s.lineup.includes(p.id)?`<div class="controls">${btn(`Sell · ${money(Math.round(C.recruitPrice(s,p)*.4))}`,'sell',`data-id="${p.id}"`)}${btn('Release','release',`data-id="${p.id}"`)}</div>`:''}</article>`;
-}
-function trainingPanel(){
- const s=state,types=Object.keys(D.TRAINING).filter(t=>C.trainingUnlocked(s,t));
- return `<section class="panel"><p class="eyebrow">BETTER EVERY DAY</p><h2>Training ground</h2><p>One whole-squad session costs one day. Gain +${D.CONFIG.trainingGain} in each listed attribute and +${D.CONFIG.trainingFatigue} fatigue. Fatigue over 60 halves gains. Injured players sit out. <b>Training gives no overall XP.</b></p><label>Main session<select id="train-type">${options(types.map(t=>[t,`${title(t)} · ${D.TRAINING[t].join(' + ')}`]),'passing')}</select></label>${s.staff.includes('split')?`<details><summary>Split training (optional)</summary><label>Second session<select id="split-type"><option value="">Whole squad, no split</option>${options(types.map(t=>[t,title(t)]),'')}</select></label><p>Checked players take the second session. Everyone else takes the main session.</p><div class="split-list">${s.squad.map(p=>`<label><input type="checkbox" name="train-group" value="${p.id}">${esc(p.name)}</label>`).join('')}</div></details>`:'<p>Hire both specialist coaches, then an assistant to unlock Split Training.</p>'}${btn('Train · spend 1 day','train','',!actionAllowed(),'primary')}</section><div class="section-title"><h2>Your backroom team</h2><span>Hiring uses funds, not preparation days</span></div><div class="staff">${Object.entries(D.CONFIG.staff).map(([k,v])=>`<article class="panel"><h3>${v.name}</h3><p>${v.description}</p>${btn(s.staff.includes(k)?'Hired ✓':`Hire · ${money(C.price(s,v.price))}`,'hire',`data-id="${k}"`,s.staff.includes(k)||s.money<C.price(s,v.price)||(k==='split'&&(!s.staff.includes('technique')||!s.staff.includes('defence'))))}</article>`).join('')}</div>`;
-}
-function recruitPanel(){
- const s=state;return `<section class="panel"><h2>Find the next club legend</h2><p>Scouting offers lower fees and approximate attributes (±8). The market reveals exact attributes at higher fees. Visiting either costs one day. Signing from that visit costs only funds. Squad limit: 22.</p><div class="controls">${btn('Scout · spend 1 day','scout','',!actionAllowed())}${btn('Market · spend 1 day','market','',!actionAllowed())}</div></section>${['scout','market'].includes(s.visit)?`<div class="players">${(s.offers||[]).map(o=>`<article class="panel"><span class="tag">${o.scouted?'SCOUT ESTIMATE ±8':'FULL ASSESSMENT'}</span><h3>${esc(o.player.name)}</h3><p>${o.player.archetype}</p><div class="stats">${D.STATS.map((k,i)=>`<div><span>${title(k)}</span><b>${o.scouted?`~${o.estimates[k]}`:o.player.stats[k]}</b></div>`).join('')}</div><p>${[...o.player.perks,...o.player.curses].map(k=>D.TRAITS[k].name).join(' · ')||'No traits'}</p>${btn(`Recruit · ${money(o.price)}`,'sign',`data-id="${o.player.id}"`,s.money<o.price||s.squad.length>=D.CONFIG.squadMax,'primary')}</article>`).join('')||'<p>No prospects left from this visit.</p>'}</div>`:'<p class="empty">Spend a scouting or market day to see available players.</p>'}`;
-}
-function shopPanel(){
- const s=state;return `<section class="panel"><h2>The club shop</h2><p>Visiting consumes a preparation day. Purchases stay available until your next activity. Stored items can be used freely during preparation.</p>${btn('Visit Shop · spend 1 day','visit-shop','',!actionAllowed())}</section><div class="staff">${Object.entries(D.CONFIG.items).map(([k,v])=>`<article class="panel"><h3>${v.name}</h3><p>${v.description}</p>${btn(`Buy · ${money(C.price(s,v.price))}`,'buy',`data-id="${k}"`,s.visit!=='shop'||s.money<C.price(s,v.price))}<p>In inventory: <b>${s.inventory[k]||0}</b></p></article>`).join('')}</div><section class="panel"><h2>Use inventory</h2><div class="controls"><label>Player<select id="item-player">${playerOptions(s.squad,s.squad[0].id)}</select></label><label>Item<select id="item-key">${options(Object.entries(D.CONFIG.items).map(([k,v])=>[k,`${v.name} (${s.inventory[k]||0})`]),'spray')}</select></label><label>Curse to remove (Fresh start)<select id="item-curse">${options(Object.entries(D.TRAITS).filter(([,t])=>t.kind==='curse').map(([k,v])=>[k,v.name]),'party')}</select></label>${btn('Use stored item','use')}</div></section>`;
-}
-function tablePanel(table=C.sortedTable(state)){
- const s=state;return `<section class="panel"><div class="section-title"><h2>${D.DIVISIONS[s.seasonSummary&&['season','victory','gameover'].includes(s.phase)?s.seasonSummary.division:s.division]}</h2><span>1st promoted · last relegated</span></div><div class="table-scroll"><table><thead><tr><th># / Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>Pts</th></tr></thead><tbody>${table.map((t,i)=>`<tr class="${t.id===s.clubId?'ours':''}"><th>${i+1} · ${esc(t.name||t.id)}</th>${['played','w','d','l','gf','ga','points'].map(k=>`<td>${t[k]??0}</td>`).join('')}</tr>`).join('')}</tbody></table></div><p>3 points for a win, 1 for a draw. Ties: goal difference, goals scored, club ID.</p></section><section class="panel"><h2>Fixture calendar</h2>${s.schedule.map((pairs,r)=>`<div class="calendar-round"><b>Round ${r+1}</b>${pairs.map(([a,b])=>{const result=s.results.find(x=>x.round===r&&x.a===a&&x.b===b);const name=id=>s.table.find(t=>t.id===id)?.name||id;return `<p>${esc(name(a))} <b>${result?`${result.ga} – ${result.gb}`:'vs'}</b> ${esc(name(b))}</p>`;}).join('')}</div>`).join('')}</section><section class="panel"><h2>Club accounts</h2><p>Fixture earnings are paid before operating costs. Purchases cannot create debt. An unpaid operating bill ends the run.</p>${s.ledger.slice(-15).reverse().map(e=>`<p class="ledger"><span>Day ${e.day} · ${esc(e.label)}</span><b class="${e.amount<0?'negative':'positive'}">${e.amount>0?'+':''}${money(e.amount)}</b></p>`).join('')||'<p>No transactions yet.</p>'}</section>`;
-}
-function reportPanel(compact=false){
- const r=state.lastReport;if(!r)return '';
- return `<section class="panel report"><p class="eyebrow">${compact?'LAST FIXTURE':'FULL TIME'}</p><h2>${r.scoreA} – ${r.scoreB}</h2><p>90 minutes · ${weather(r.weather)} · ${r.substitutions} substitutions · Earned ${money(r.earnings)}, costs ${money(r.cost)}</p>${compact?'':`<div class="table-scroll"><table><thead><tr><th>Player</th><th>Minutes</th><th>XP gained</th><th>Levels</th><th>Fatigue added</th></tr></thead><tbody>${r.changes.map(p=>`<tr><th>${esc(p.name)}</th><td>${p.minutes}</td><td>+${p.xp}</td><td>+${p.levels}</td><td>+${p.fatigue}</td></tr>`).join('')}</tbody></table></div><p>Level upgrades await your choice in Squad. Injuries and proficiency are shown on player cards.</p>`}</section>`;
-}
-function endingPanel(){
- const s=state;return `<section class="hero ending"><p class="eyebrow">${s.phase==='victory'?'THE UNDERDOGS DID IT':s.phase==='gameover'?'THE FINAL WHISTLE':'SEASON COMPLETE'}</p><h1>${s.phase==='victory'?'Champions.':s.phase==='gameover'?'A story worth playing.':`Season ${s.season}`}</h1><p>${esc(s.ending&&s.phase!=='season'?s.ending:s.seasonSummary?.message)}</p>${s.phase==='gameover'?btn('Choose a new club','reset','',false,'primary'):s.phase==='victory'?btn('Continue Career →','continue','',false,'primary'):`<h2>Choose one club perk</h2><div class="staff">${s.perkChoices.map(k=>`<article class="panel"><h3>${D.CLUB_PERKS[k].name}</h3><p>${D.CLUB_PERKS[k].description}</p>${btn('Choose perk','perk',`data-id="${k}"`)}</article>`).join('')}</div>${btn('Start next season →','continue','',s.perkChoices.length>0,'primary')}`}</section>${s.seasonSummary?tablePanel(s.seasonSummary.table):''}`;
-}
-function matchPanel(){return `<section class="panel live"><div class="section-title"><h2 id="match-score">Preparing the pitch…</h2><span id="match-clock">${weather(state.match.weather)}</span></div><canvas id="match-canvas" width="1100" height="680" aria-label="Live automatic football match"></canvas><div class="controls">${btn(paused?'Play':'Pause','pause')}<label>Match speed<select id="match-speed">${options([1,4,8,16,32].map(n=>[String(n),`${n}×`]),String(speed))}</select></label>${btn('Simulate rapidly →','fast','',false)}<span>Footballers play automatically.</span></div><div id="live-changes"></div></section>`;}
-function refreshLive(){
- if(!live||!$('match-score'))return;
- const t=live.sim.teamA;
- $('match-score').textContent=`${state.clubName} ${live.sim.scoreA} – ${live.sim.scoreB} ${live.options.b.name}`;
- $('match-clock').textContent=`${Math.min(90,Math.floor(live.sim.matchTimer/60))}′ · ${weather(state.match.weather)} · ${live.sim.matchState}`;
- const signature=t.players.map(p=>`${p.careerId}:${p.role}:${p.isSentOff}`).join()+'|'+t.substitutionsMade+'|'+live.queue.length;
- if($('live-changes').dataset.signature!==signature){
-  $('live-changes').dataset.signature=signature;
-  const active=t.players.filter(p=>!p.isSentOff);
-  $('live-changes').innerHTML=`<h3>Touchline decisions · ${t.substitutionsMade}/${D.CONFIG.subLimit} substitutions used</h3><p>Changes happen at the next stoppage. Sent-off players cannot be replaced. ${live.queue.length} change(s) queued.</p><div class="controls"><label>Off<select id="sub-out">${options(active.map(p=>[p.careerId,`${p.name} · ${p.role}`]),'')}</select></label><label>On<select id="sub-in">${options(t.bench.map(p=>[p.careerId,p.name]),'')}</select></label>${btn('Queue substitution','sub','',!t.bench.length||t.substitutionsMade>=D.CONFIG.subLimit)}</div><details><summary>Switch positions during the match</summary><p>Actual minutes and proficiency split between the positions played.</p><div class="controls"><select id="swap-a" aria-label="First player">${options(active.map(p=>[p.careerId,`${p.name} · ${p.role}`]),'')}</select><select id="swap-b" aria-label="Second player">${options(active.map(p=>[p.careerId,`${p.name} · ${p.role}`]),active[1]?.careerId)}</select>${btn('Queue position swap','swap')}</div></details>`;
+let match=null,input=null,paused=false,loading=false,lastFrame=0,accumulator=0,preview=null,selected='cole',sound=true,view='select',raf=0,stickPointer=null,stickOrigin=null;
+const cleanups=[];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function portrait(c){return `<svg viewBox="0 0 180 190" aria-hidden="true" class="portrait"><ellipse cx="90" cy="185" rx="58" ry="8" fill="#000" opacity=".2"/><path d="M65 75 L44 86 19 126 41 141 58 114 57 190H123L122 114 139 141 161 126 136 86 115 75Z" fill="#e8af3c"/><path d="M19 126L41 141 35 160Q28 168 20 159L12 145Z M161 126L139 141 145 160Q152 168 160 159L168 145Z" fill="${c.skin}"/><path d="M71 66V84Q90 100 109 84V66" fill="${c.skin}"/><path d="M65 75Q90 97 115 75L111 89Q90 108 69 89Z" fill="#1d292c"/><path d="M58 109L51 94M122 109L129 94" stroke="#f4d277" stroke-width="4"/><path d="M59 43Q60 14 90 14Q120 14 121 43L116 64Q111 81 90 82Q69 81 64 64Z" fill="${c.skin}"/><path d="M60 47V33Q62 9 90 11Q119 10 121 34V47L112 34Q93 40 76 30L68 49Z" fill="${c.hair}"/><path d="M78 57h4m16 0h4" stroke="#30271f" stroke-width="3" stroke-linecap="round"/><path d="M84 70q6 3 12 0" fill="none" stroke="#7d4f3e" stroke-width="2"/><text x="90" y="163" fill="#1b292d" font-family="Impact,Arial Black,sans-serif" font-size="54" text-anchor="middle">${c.number}</text><path d="M60 184H120" stroke="#f4cf68" stroke-width="3"/></svg>`;}
+function icon(name){const paths={pause:'<path d="M8 5v14M16 5v14"/>',sound:'<path d="M4 9h4l5-4v14l-5-4H4zM17 8q5 4 0 8"/>',muted:'<path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6m0-6l-5 6"/>',expand:'<path d="M4 9V4h5m6 0h5v5m0 6v5h-5M9 20H4v-5"/>'};return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name]||''}</svg>`;}
+function toast(text){$('message').textContent=text;}
+function showSelection(){
+ view='select';paused=false;loading=false;
+ if(match){match.destroy();match=null;input=null;}
+ SoundDB.stopCrowd();
+ $('hud').hidden=true;$('touch').hidden=true;$('overlay').hidden=false;
+ $('overlay').innerHTML=`<div class="selection"><div class="selection-top"><span class="wordmark">SOCCER<span> / FIVE</span></span><span class="edition">5 A SIDE · 3 MINUTES</span></div><div class="selection-heading"><p class="kicker">PICK YOUR PLAYER</p><h1>Own the pitch.</h1></div><div class="characters">${CHARACTERS.map(c=>`<button class="character ${selected===c.id?'selected':''}" style="--accent:${c.color}" data-character="${c.id}" aria-pressed="${selected===c.id}"><span class="character-role">${c.role}</span><span class="character-art">${portrait(c)}<span class="jersey-number">${c.number}</span></span><span class="character-name">${c.short}</span><span class="full-name">${esc(c.name)}</span><span class="character-trait">${c.strength}<span>${Math.max(...Object.values(c.stats))}</span></span></button>`).join('')}</div><div class="selection-bottom"><div class="selection-controls"><span><kbd>W A S D</kbd> Move</span><span><kbd>J</kbd> Pass / tackle</span><span><kbd>K</kbd> Shoot</span><span><kbd>⇧</kbd> Sprint</span></div><button class="play" data-action="play">PLAY <span>↗</span></button></div><div class="selection-foot"><span>One player. Your team.</span><span>Mouse aims · Hold to charge</span></div></div>`;
+ $('message').textContent='';
  }
+function hud(){
+ $('hud').innerHTML=`<div class="hud-brand">S<span>/</span>5</div><div class="scoreboard"><span class="team-label home">GOLD</span><b id="home-score">0</b><span class="score-divider">:</span><b id="away-score">0</b><span class="team-label away">BLUE</span><time id="clock">3:00</time></div><div class="hud-actions"><button data-action="sound" id="sound" aria-label="Mute sound">${icon(sound?'sound':'muted')}</button><button data-action="fullscreen" aria-label="Toggle fullscreen">${icon('expand')}</button><button data-action="pause" aria-label="Pause match">${icon('pause')}</button></div><div class="player-hud"><span class="player-number">${match.character.number}</span><div><b>${match.character.short}</b><span id="direction">ATTACK →</span></div><div class="condition-bars"><div class="stamina-track" title="Stamina"><span id="stamina"></span></div><div class="charge-track" title="Kick power"><span id="charge"></span></div></div></div><div class="desktop-controls"><span><kbd>J</kbd> PASS / TACKLE</span><span><kbd>K</kbd> SHOOT</span><span><kbd>L</kbd> LOB / SLIDE</span><span><kbd>E</kbd> CALL</span><span><kbd>⇧</kbd> SPRINT</span></div><div id="announcement" aria-live="polite"></div>`;
+ $('hud').hidden=false;
+ $('touch').hidden=false;
+}
+async function start(){
+ if(loading)return;loading=true;toast('Loading pitch…');
+ try{
+  if(match)match.destroy();
+  SoundDB.stopCrowd();SoundDB.resume();match=await FiveMatch.create(selected);Settings.soundsMuted=!sound;
+  await loadKits();
+  // The custom selection marker replaces debug/AI rings in this mode only.
+  for(const p of match.sim.players)p.preRender=()=>{};
+  input=match.input;input.attach(window);
+  try{localStorage.setItem('soccer-five-character',selected);}catch(_){}
+  paused=false;loading=false;view='play';$('overlay').hidden=true;hud();toast('');
+  accumulator=0;lastFrame=performance.now();$('pitch').focus({preventScroll:true});
+ }catch(e){loading=false;view='select';toast(`Could not start: ${e.message}`);}
+}
+function overlay(kind){
+ view=kind;paused=true;input?.reset();
+ $('touch').hidden=true;$('overlay').hidden=false;
+ const finished=kind==='finished',sentOff=match?.player.isSentOff;
+ const won=match&&match.sim.scoreA>match.sim.scoreB,draw=match&&match.sim.scoreA===match.sim.scoreB;
+ $('overlay').innerHTML=`<div class="match-overlay"><p class="kicker">${finished?'FULL TIME':'TIME OUT'}</p><h1>${finished?(sentOff?'Sent off.':draw?'Honours even.':won?'That’s your game.':'Run it back.'):'Paused.'}</h1>${finished?`<div class="final-score"><span>GOLD</span><strong>${match.sim.scoreA} : ${match.sim.scoreB}</strong><span>BLUE</span></div>`:''}<div class="overlay-buttons">${finished?'': '<button class="play" data-action="resume">RESUME →</button>'}<button class="${finished?'play':'secondary'}" data-action="restart">${finished?'PLAY AGAIN →':'RESTART'}</button><button class="text-button" data-action="choose">CHANGE PLAYER</button></div></div>`;
+}
+function resume(){if(!match||match.finished)return;paused=false;view='play';input.reset();$('overlay').hidden=true;$('touch').hidden=false;lastFrame=performance.now();}
+function camera(){
+ const canvas=$('pitch'),rect=canvas.getBoundingClientRect(),dpr=Math.min(2,window.devicePixelRatio||1);
+ const w=Math.max(320,Math.round(rect.width*dpr)),h=Math.max(240,Math.round(rect.height*dpr));
+ if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+ const touch=window.matchMedia?.('(pointer:coarse)').matches;
+ const landscape=rect.width>rect.height*1.3;
+ const margin=(touch&&landscape?140:35)*dpr,top=(landscape?80:110)*dpr,bottom=(touch?(landscape?38:170):80)*dpr;
+ let scale=Math.max(2,Math.min((w-margin*2)/(52+34*.3),(h-top-bottom)/(34*.8)));
+ const portraitFollow=touch&&!landscape&&match;
+ if(portraitFollow)scale=Math.max(scale,11.5*dpr);
+ let offsetX=(w-(52+34*.3)*scale)/2;
+ if(portraitFollow){
+  const p=match.player,b=match.sim.ball,targetX=(p.x*.65+b.x*.35)*scale+(p.y*.65+b.y*.35)*scale*.3;
+  offsetX=Math.max(w-25*dpr-(52+34*.3)*scale,Math.min(25*dpr,w/2-targetX));
+ }
+ Settings.camera={...Settings.camera,type:'static',scale,offsetX,offsetY:top+Math.max(0,(h-top-bottom-34*.8*scale)/2)};
+ Settings.showFPS=false;Settings.projectionMode='orthographic';Settings.HEADLESS=false;
+ Application.canvas=canvas;Application.g=canvas.getContext('2d');Application.camX=0;Application.camY=0;Application.width=w;Application.height=h;Settings.app=Application;
+ return {canvas,g:Application.g,dpr};
 }
 function paint(){
- if(!live||!$('match-canvas'))return;
- const canvas=$('match-canvas'),g=canvas.getContext('2d');
- Application.canvas=canvas;Application.g=g;Application.currentLevel=live.sim;Application.levelReady=true;Application.gameStatus='running';
- Settings.app=Application;Settings.projectionMode='orthographic';Settings.camera.type='static';Settings.camera.scale=7.5;Settings.camera.offsetX=45;Settings.camera.offsetY=80;
- Application.camX=0;Application.camY=0;
- g.clearRect(0,0,canvas.width,canvas.height);g.fillStyle='#10231e';g.fillRect(0,0,canvas.width,canvas.height);
- Settings.HEADLESS=false;try{Application.render();}finally{Settings.HEADLESS=true;}
+ const {canvas,g,dpr}=camera();
+ g.fillStyle='#121c20';g.fillRect(0,0,canvas.width,canvas.height);
+ g.imageSmoothingEnabled=false;
+ const active=match?.sim;
+ if(active){
+  active.renderAll(g);
+  const p=match.player,point=Utils.toScreen(p.x,p.y),scale=Settings.camera.scale;
+  if(!p.isSentOff){
+   g.strokeStyle='#ffcd61';g.lineWidth=2*dpr;g.beginPath();g.ellipse(point.x,point.y,scale*.72,scale*.32,0,0,Math.PI*2);g.stroke();
+   g.fillStyle='#ffcd61';g.beginPath();g.moveTo(point.x,point.y-scale*2.8);g.lineTo(point.x-scale*.25,point.y-scale*3.25);g.lineTo(point.x+scale*.25,point.y-scale*3.25);g.closePath();g.fill();
+   if(input?.aim&&active.ball.owner===p){
+    const len=Math.hypot(input.aim.x,input.aim.y)||1,end=Utils.toScreen(p.x+input.aim.x/len*4,p.y+input.aim.y/len*4);
+    g.globalAlpha=.55;g.setLineDash([4*dpr,5*dpr]);g.beginPath();g.moveTo(point.x,point.y);g.lineTo(end.x,end.y);g.stroke();g.setLineDash([]);g.globalAlpha=1;
+   }
+  }
+ }else{
+  if(!preview)preview=new Pitch();preview.render(g);
+ }
+ // A gentle stadium vignette; the engine pitch and animated sprites stay intact.
+ const vignette=g.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*.22,canvas.width/2,canvas.height/2,canvas.width*.75);
+ vignette.addColorStop(0,'#0000');vignette.addColorStop(1,'#02090d99');g.fillStyle=vignette;g.fillRect(0,0,canvas.width,canvas.height);
 }
-async function openMatch(){
- busy=true;notice('Preparing match and restoring saved decisions…');
+function updateHud(){
+ if(!match||!$('home-score'))return;
+ const s=match.sim,remaining=Math.max(0,Math.ceil((5400-s.matchTimer)/5400*s.matchDuration));
+ $('home-score').textContent=s.scoreA;$('away-score').textContent=s.scoreB;$('clock').textContent=`${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}`;
+ $('stamina').style.width=`${match.player.currentStamina*100}%`;
+ const charge=s._manualCharge;$('charge').style.width=`${charge?Math.min(100,charge.ticks*.05/.6*100):0}%`;
+ $('direction').textContent=s.isSecondHalf()?'← ATTACK':'ATTACK →';
+ const labels={kickoff:'KICK OFF',goal:s.goalScoredTeam==='A'?'GOAL!':'BLUE SCORES',halftime:'HALF TIME · SWITCH ENDS',corner:'CORNER',throwin:'THROW IN',freekick:'FREE KICK',goalkick:'GOAL KICK',penalty:'PENALTY',foul:'FOUL',card:s.cardType==='red'?'RED CARD':'YELLOW CARD'};
+ const label=labels[s.matchState]||'';
+ if($('announcement').textContent!==label)$('announcement').textContent=label;
+}
+function loop(now){
  try{
-  if(!state.match)C.beginMatch(state);persist();render();
-  live=await careerMatch(state);const target=state.match.ticks;
-  while(live.ticks<target&&!live.finished){live.step(Math.min(500,target-live.ticks));await new Promise(r=>setTimeout(r,0));}
-  await registerKits(live);paused=false;lastFrame=performance.now();accumulator=0;busy=false;notice('Match ready. Your team plays automatically.');refreshLive();raf=requestAnimationFrame(frame);
- }catch(e){busy=false;notice(e.message,true);}
+  const dt=Math.min(.12,(now-lastFrame)/1000||0);lastFrame=now;
+  if(match&&!paused&&view==='play'){
+   accumulator+=dt;while(accumulator>=.05){match.step();accumulator-=.05;if(match.finished||match.player.isSentOff){overlay('finished');break;}}
+   updateHud();
+  }
+  paint();
+ }catch(e){paused=true;toast(`Match paused: ${e.message}`);}
+ raf=requestAnimationFrame(loop);
 }
-function frame(now){
- try{
-  if(!live)return;
-  const elapsed=Math.min(.2,(now-lastFrame)/1000);lastFrame=now;
-  if(!paused){accumulator+=elapsed*20*speed;const count=Math.min(600,Math.floor(accumulator));accumulator-=count;if(count)live.step(count);}
-  state.match.ticks=live.ticks;
-  if(now-lastSave>1000){persist();lastSave=now;}
-  refreshLive();paint();
-  if(live.finished){finishLive();return;}
-  raf=requestAnimationFrame(frame);
- }catch(e){paused=true;notice(e.message,true);}
+function pointerAim(e){
+ if(!input||e.pointerType==='touch'||view!=='play')return;
+ const canvas=$('pitch'),r=canvas.getBoundingClientRect();
+ const sx=(e.clientX-r.left)*canvas.width/r.width,sy=(e.clientY-r.top)*canvas.height/r.height;
+ const w=Utils.worldDeltaFromScreenDelta(sx-Settings.camera.offsetX,sy-Settings.camera.offsetY);
+ input.aim={x:w.ox-match.player.x,y:w.oy-match.player.y};
 }
-function finishLive(){const report=live.report();C.applyMatchReport(state,report);live=null;persist();render();notice('Full time. Review your squad’s match progression.');}
-async function resolveRound(){
- busy=true;render();notice('Playing the other league fixture with the same match engine…');
- try{const pairs=state.schedule[state.round].filter(p=>!p.includes(state.clubId)),results=[];
-  for(let i=0;i<pairs.length;i++)results.push(await simulateOther(state,...pairs[i],(state.rng+state.round*197+i)>>>0));
-  C.finishRound(state,results);persist();busy=false;view='club';render();notice('League round complete.');
- }catch(e){busy=false;render();notice(e.message,true);}
+function bindTouch(){
+ const stick=$('joystick'),nub=$('stick-nub');
+ const clearStick=()=>{stickPointer=null;stickOrigin=null;nub.style.transform='translate(0px,0px)';if(input)input.move=null;};
+ const move=e=>{
+  if(e.pointerId!==stickPointer||!input||!stickOrigin)return;e.preventDefault();
+  let x=e.clientX-stickOrigin.x,y=e.clientY-stickOrigin.y;const len=Math.hypot(x,y),limit=36;
+  if(len>limit){x=x/len*limit;y=y/len*limit;}
+  nub.style.transform=`translate(${x}px,${y}px)`;input.move={x:x/limit,y:y/limit};input.aim=null;
+ };
+ stick.addEventListener('pointerdown',e=>{if(!input||view!=='play')return;e.preventDefault();stickPointer=e.pointerId;const r=stick.getBoundingClientRect();stickOrigin={x:r.left+r.width/2,y:r.top+r.height/2};stick.setPointerCapture(e.pointerId);move(e);});
+ stick.addEventListener('pointermove',move);stick.addEventListener('pointerup',clearStick);stick.addEventListener('pointercancel',clearStick);stick.addEventListener('lostpointercapture',clearStick);
+ for(const button of document.querySelectorAll('[data-key]')){
+  const code=button.dataset.key;
+  const release=e=>{e.preventDefault();input?.release(code);button.classList.remove('held');};
+  button.addEventListener('pointerdown',e=>{if(!input||view!=='play')return;e.preventDefault();button.setPointerCapture(e.pointerId);input.press(code);button.classList.add('held');});
+  button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('lostpointercapture',release);
+ }
 }
-async function handle(action,el){
- if(busy&&!['export'].includes(action))return;
- const id=el.dataset.id;
- if(action==='new'){state=C.newRun(id);view='club';}
- else if(action==='nav'){view=el.dataset.view;}
- else if(action==='reset'){if(!confirm('End this career and choose a new club? Export your save first to keep it.'))return;cancelAnimationFrame(raf);live=null;state=null;localStorage.removeItem(KEY);render();return;}
- else if(action==='export'){const blob=new Blob([C.encodeSave(state)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='soccer-rogue-save.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);return;}
- else if(action==='import'){$('save-file').click();return;}
- else if(action==='rest')C.activity(state,'rest');
- else if(action==='scout'||action==='market'){C.activity(state,action);view='recruits';}
- else if(action==='visit-shop'){C.activity(state,'shop');view='shop';}
- else if(action==='train'){C.activity(state,'train',{type:$('train-type').value,split:$('split-type')?.value||null,group:[...document.querySelectorAll('[name="train-group"]:checked')].map(e=>e.value)});}
- else if(action==='hire')C.hire(state,id);
- else if(action==='buy')C.buy(state,id);
- else if(action==='use')C.useItem(state,$('item-key').value,$('item-player').value,$('item-curse').value);
- else if(action==='sign')C.sign(state,id);
- else if(action==='sell'||action==='release')C.sell(state,id,action==='release');
- else if(action==='upgrade')P.chooseUpgrade(state.squad.find(p=>p.id===id),Number(el.dataset.choice));
- else if(action==='perk')C.choosePerk(state,id);
- else if(action==='continue')C.continueSeason(state);
- else if(action==='match'){C.beginMatch(state);await openMatch();return;}
- else if(action==='round'){await resolveRound();return;}
- else if(action==='pause'){paused=!paused;el.textContent=paused?'Play':'Pause';return;}
- else if(action==='fast'){speed=512;paused=false;notice('Rapid simulation: same engine, same fixture and accounting.');return;}
- else if(action==='sub'){live.command('sub',{out:$('sub-out').value,in:$('sub-in').value});persist();notice('Substitution queued for the next stoppage.');return;}
- else if(action==='swap'){live.command('swap',{a:$('swap-a').value,b:$('swap-b').value});persist();notice('Position switch queued for the next stoppage.');return;}
- persist();render();
-}
-document.addEventListener('DOMContentLoaded',()=>{
- try{const saved=localStorage.getItem(KEY);if(saved)state=C.decodeSave(saved);}catch(e){notice(`Save could not be loaded: ${e.message}. Your stored save has not been overwritten.`,true);}
- render();if(state?.phase==='match')openMatch();
- $('rogue').addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(b&&!b.disabled)Promise.resolve(handle(b.dataset.action,b)).catch(e=>notice(e.message,true));});
- $('rogue').addEventListener('change',async e=>{
-  try{
-   if(e.target.id==='save-file'){const file=e.target.files[0];if(!file)return;const imported=C.decodeSave(await file.text());cancelAnimationFrame(raf);live=null;state=imported;persist();render();if(state.phase==='match')await openMatch();return;}
-   if(e.target.dataset.slot!==undefined)C.assign(state,Number(e.target.dataset.slot),e.target.value);
-   else if(e.target.id==='formation')C.setFormation(state,e.target.value);
-   else if(e.target.id==='tactic')state.tactic=e.target.value;
-   else if(e.target.id==='match-speed'){speed=Number(e.target.value);return;}else return;
-   persist();render();
-  }catch(err){notice(err.message,true);render();}
+function on(target,event,fn){target.addEventListener(event,fn);cleanups.push(()=>target.removeEventListener(event,fn));}
+function init(){
+ configureFive(false);
+ try{const saved=localStorage.getItem('soccer-five-character');if(CHARACTERS.some(c=>c.id===saved))selected=saved;}catch(_){}
+ showSelection();
+ on(document,'click',async e=>{
+  const character=e.target.closest('[data-character]');
+  if(character&&!loading){selected=character.dataset.character;for(const el of document.querySelectorAll('[data-character]')){el.classList.toggle('selected',el===character);el.setAttribute('aria-pressed',String(el===character));}return;}
+  const action=e.target.closest('[data-action]')?.dataset.action;
+  if(action==='play'||action==='restart')await start();
+  else if(action==='choose')showSelection();
+  else if(action==='pause')overlay('paused');
+  else if(action==='resume')resume();
+  else if(action==='sound'){sound=!sound;Settings.soundsMuted=!sound;$('sound').innerHTML=icon(sound?'sound':'muted');$('sound').setAttribute('aria-label',sound?'Mute sound':'Enable sound');if(sound)SoundDB.resume();else SoundDB.stopCrowd();}
+  else if(action==='fullscreen'){try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch(_){toast('Fullscreen is unavailable in this browser.');}}
  });
- window.addEventListener('beforeunload',()=>{if(live&&state.match)state.match.ticks=live.ticks;persist();});
-});
+ on(window,'keydown',e=>{if(e.code==='Escape'&&match&&!match.finished){e.preventDefault();if(paused)resume();else overlay('paused');}});
+ on(window,'blur',()=>{input?.reset();if(match&&view==='play')overlay('paused');});
+ on(document,'visibilitychange',()=>{if(document.hidden&&match&&view==='play')overlay('paused');});
+ on($('pitch'),'pointermove',pointerAim);
+ on($('pitch'),'contextmenu',e=>e.preventDefault());
+ on($('pitch'),'pointerdown',e=>{if(!input||view!=='play'||e.pointerType==='touch')return;e.preventDefault();pointerAim(e);$('pitch').setPointerCapture(e.pointerId);input.press(e.button===2?'Digit3':'Digit1');});
+ on($('pitch'),'pointerup',e=>{input?.release(e.button===2?'Digit3':'Digit1');});
+ on($('pitch'),'pointercancel',()=>input?.reset());
+ bindTouch();lastFrame=performance.now();raf=requestAnimationFrame(loop);
+}
+document.addEventListener('DOMContentLoaded',init);
+module.exports={portrait};
