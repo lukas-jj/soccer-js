@@ -1,0 +1,32 @@
+// DOM interaction harness. Browser rendering is intentionally not mocked as a visual test.
+require('./mock_env.js');
+const assert=require('node:assert/strict');
+const nodes=new Map(),listeners={},windowListeners={};
+const node=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',className:'',dataset:{},value:'',addEventListener(type,fn){listeners[id+':'+type]=fn;}});return nodes.get(id);};
+const root=node('rogue');node('notice');
+global.localStorage={data:{},getItem(k){return this.data[k]||null;},setItem(k,v){this.data[k]=v;},removeItem(k){delete this.data[k];}};
+global.document.getElementById=id=>['rogue','notice'].includes(id)||[...nodes.values()].some(n=>n.innerHTML.includes(`id="${id}"`))?node(id):null;
+global.document.addEventListener=(type,fn)=>{listeners['document:'+type]=fn;};
+global.document.querySelectorAll=()=>[];
+global.window.addEventListener=(type,fn)=>{windowListeners[type]=fn;};
+global.requestAnimationFrame=()=>1;global.cancelAnimationFrame=()=>{};global.confirm=()=>true;
+require('../kernel/apps/soccer-rogue/app.js');
+const flush=async()=>{await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));};
+const click=async(action,data={})=>{const el={dataset:{action,...data},disabled:false};listeners['rogue:click']({target:{closest:()=>el}});await flush();};
+const saved=()=>JSON.parse(localStorage.getItem('soccer-rogue-v1'));
+(async()=>{
+ listeners['document:DOMContentLoaded']();assert.ok(root.innerHTML.includes('Choose your club'));
+ await click('new',{id:'harbor'});assert.equal(saved().clubId,'harbor');
+ await click('nav',{view:'training'});assert.ok(node('content').innerHTML.includes('Training ground'));
+ node('train-type').value='passing';await click('train');assert.equal(saved().prepLeft,2);
+ await click('scout');assert.equal(saved().visit,'scout');assert.ok(node('content').innerHTML.includes('SCOUT ESTIMATE'));
+ const offer=saved().offers[0];await click('sign',{id:offer.player.id});assert.equal(saved().squad.length,17);
+ await click('visit-shop');assert.equal(saved().prepLeft,0);assert.ok(node('content').innerHTML.includes('The club shop'));
+ await click('buy',{id:'spray'});assert.equal(saved().inventory.spray,1);
+ node('item-key').value='spray';node('item-player').value=saved().squad[0].id;await click('use');assert.equal(saved().inventory.spray,0);
+ await click('rest');assert.equal(saved().prepLeft,0);assert.ok(node('notice').textContent.includes('No preparation days'));
+ await click('nav',{view:'squad'});assert.ok(node('content').innerHTML.includes('Your match plan'));
+ await click('nav',{view:'table'});assert.ok(node('content').innerHTML.includes('Fixture calendar'));
+ await click('reset');assert.equal(localStorage.getItem('soccer-rogue-v1'),null);assert.ok(root.innerHTML.includes('Choose your club'));
+ console.info('Soccer Rogue UI interactions passed');
+})().catch(e=>{console.error(e);process.exitCode=1;});

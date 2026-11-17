@@ -160,3 +160,74 @@ If you find this project useful and would like to support its development, you c
 
 * **Bitcoin (BTC)**:  
   `bc1qqk5s3rmvxe3mlhtzr07xnp44ap6yu95ksva703`
+
+## Soccer Rogue — football management roguelite
+
+Soccer Rogue is a separate app; the Match Simulator, Batch Builder, Analysis,
+Asset Manager and Scenario Lab remain at their existing URLs.
+
+```bash
+npm install
+npm run build
+npm run dev
+```
+
+Open **http://localhost:8080/html/soccer-rogue.html**, or follow **Play Soccer Rogue**
+from the Match Simulator. Node.js 18+ is required. Serve over HTTP; do not open
+HTML directly from the filesystem because the engine fetches its sprite assets.
+
+Choose Harbor Lanterns (rain specialists), Orchard Comets (accelerated learning),
+or Summit Rovers (rest specialists). Each has its own starting stat bias and
+permanent perk. Four teams contest a three-round season in each of three divisions.
+First place promotes, last place relegates. Last in District ends the run. Your
+first Premier title wins; Continue Career keeps the same club and squad playing.
+Tiebreaks are points, goal difference, goals scored, then stable club ID.
+
+Before every fixture, spend three days on training, rest, scouting, the market,
+or the shop. Formation/lineup, level choices, staff hires and inventory use do not
+consume a day. A scouting/market/shop visit remains open until the next activity.
+Scouting gives three cheaper prospects with estimates within eight stat points;
+market gives six exactly assessed prospects. No contracts or wages. Purchases
+cannot create debt. Fixture income is paid before operating costs; failing to
+cover the bill means bankruptcy. Balance constants and prices are in
+`kernel/rogue/data.js` (including 180 seconds of engine play per fixture).
+
+Training directly adds attributes, never overall XP. Actual match minutes earn XP,
+fatigue and independent GK/DF/MF/FW proficiency. Every level queues three upgrades
+weighted by archetype; you choose one, with multiple choices retained until selected.
+Cards explain every trait, injury and positional effect. Injury rolls resolve in
+the match report; injured players cannot start the next fixture. Preparation days
+heal injuries, doctors accelerate healing and stored treatments shorten recovery.
+All stats remain on the engine's eight-attribute 1–100 scale.
+
+Matches use the existing `Simulator`, its football rules, formations, AI, weather,
+physics and sprites. Tactical styles reuse `ai_archetypes.json`. The career adapter
+feeds effective player attributes into the engine. There is no random-score shortcut:
+other league fixtures also run through the same simulator. Watch at 1–32×, pause,
+or simulate rapidly. Queue substitutions at any time; they execute at the next
+stoppage, limited to three. The player's club does not substitute automatically;
+opponents retain the engine's behavior. Position swaps also execute at stoppages,
+and actual minutes are allocated to each role separately.
+
+Careers autosave under localStorage key `soccer-rogue-v1` with version 1. Export /
+Import in Save & run controls provides portable JSON backups. Active matches save
+the seed, fixed-step tick and manager command timeline; refresh replays the same
+engine to that tick before continuing. Match rewards apply exactly once, then the
+other league fixture resolves as a separate persistent phase. Save files from
+unsupported versions are rejected instead of silently reset. Reset asks before
+ending your career.
+
+Targeted checks:
+
+```bash
+npm run test:rogue
+npm run test:substitutions
+npm run test:headless
+npm run test:formations
+npm run test:bundle
+```
+
+Career rules live in `kernel/rogue/{data,players,career}.js`, the engine bridge in
+`kernel/rogue/match.js`, presentation in `kernel/apps/soccer-rogue/app.js`, and styling
+in `scss/rogue.scss`. The build emits `build/rogue.bundle.js` and `build/rogue.css`
+alongside the existing bundles. No backend or new runtime framework is required.

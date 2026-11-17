@@ -24,3 +24,6 @@ if (result.sourceMap) {
 
 fs.writeFileSync(output, css);
 console.log(`  build/app.css         ${(css.length / 1024).toFixed(1)}kb`);
+
+const rogue = sass.compile(path.join(root, "scss", "rogue.scss"), {style: "compressed"});
+fs.writeFileSync(path.join(root, "build", "rogue.css"), rogue.css);

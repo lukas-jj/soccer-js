@@ -3658,6 +3658,8 @@ class Simulator extends GameObject {
     }
 
     evaluateTeamSubstitutions(team) {
+        // Career mode delegates this team's changes to the manager. AI defaults stay intact.
+        if (team.managerControlled) return;
         if (!team.bench || team.bench.length === 0) return;
         if (team.substitutionsMade >= 3) return;
 
