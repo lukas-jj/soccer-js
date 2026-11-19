@@ -12,6 +12,9 @@ const {
     futurePositionFromVelocity,
     futurePosition: futurePositionPure,
     maxTravelDistance,
+    samplePassRoute,
+    touchlineRebound,
+    endLineRebound,
     distanceCoveredInTime
 } = require('../lib/ball_prediction.js');
 const { armKickerClaimCooldown } = require('../lib/logic_regulator.js');
@@ -37,6 +40,8 @@ class Ball extends GameObject {
         this.owner = null;  // Player currently holding the ball
         /** @type {object|null} Last kicker (own-pass reclaim skips first-touch fumble). */
         this.lastKicker = null;
+        this.kickSequence = 0;
+        this.passRoute = null;
         this.curveForce = 0; // Curving spin force (Magnus effect)
         this.isThrowInFlight = false;
         this.isShot = false; // Outfield shot block flag
@@ -68,6 +73,7 @@ class Ball extends GameObject {
         this.vz = 0;
         this.owner = null;
         this.lastKicker = null;
+        this.passRoute = null;
         this.curveForce = 0;
         this.isThrowInFlight = false;
         this.isShot = false;
@@ -88,6 +94,8 @@ class Ball extends GameObject {
     }
 
     kick(vx, vy, vz, curveForce = 0) {
+        this.kickSequence++;
+        this.passRoute = null;
         if (this.owner) {
             // Logic-time claim lockout — set-piece vs open play durations from Settings.AI
             const isSetPiece = !!(this.owner.level && this.owner.level.setPieceType);
@@ -106,6 +114,7 @@ class Ball extends GameObject {
 
     syncToOwner() {
         if (!this.owner) return;
+        this.passRoute = null;
 
         // Boundary set-pieces (throw-in / corner): pin ball to fixed in-field spot.
         // Carry offset near the paint / corner flag pushes the ball OOB and restarts.
@@ -142,11 +151,42 @@ class Ball extends GameObject {
         const { ox, oy } = computeCarryOffset(this.owner.orientation);
         this.x = this.owner.x + ox;
         this.y = this.owner.y + oy;
+        if (this.endLineGoals) this.x = Math.max(this.radius, Math.min(this.maxX - this.radius, this.x));
+        if (this.touchlineBoards) this.y = Math.max(this.radius, Math.min(this.maxY - this.radius, this.y));
         this.z = 0;
         this.vx = 0;
         this.vy = 0;
         this.vz = 0;
         this.curveForce = 0;
+    }
+
+    bounceOffTouchline() {
+        if (!this.touchlineBoards || this.owner || this.x < 0 || this.x > this.maxX) return;
+        const rebound = touchlineRebound(this.y, this.vy, this.maxY, this.radius);
+        if (!rebound) return;
+        if (rebound.vy !== this.vy) {
+            this.curveForce *= -.55;
+            SoundDB.play('bounce', { volume: .5 });
+        }
+        this.y = rebound.y;
+        this.vy = rebound.vy;
+        this.passRoute = null;
+    }
+
+    bounceOffEndLine(previous = this) {
+        if (!this.endLineGoals || this.owner || (this.x >= 0 && this.x <= this.maxX)) return;
+        const { prevX, prevY, prevZ } = previous;
+        const rebound = endLineRebound({ x: this.x, y: this.y, z: this.z, prevX, prevY, prevZ },
+            this.vx, this.maxX, this.radius, this.endLineGoals);
+        if (!rebound) return;
+        if (rebound.vx !== this.vx) {
+            this.curveForce *= -.55;
+            SoundDB.play('bounce', { volume: .5 });
+        }
+        this.x = rebound.x;
+        this.vx = rebound.vx;
+        this.passRoute = null;
+        this.bounceOffTouchline();
     }
 
     update() {
@@ -159,6 +199,17 @@ class Ball extends GameObject {
             this.prevX = this.x;
             this.prevY = this.y;
             this.prevZ = this.z;
+        } else if (this.passRoute) {
+            const route = this.passRoute;
+            route.elapsed += Time.deltaTime;
+            const previous = { prevX: this.x, prevY: this.y, prevZ: this.z };
+            Object.assign(this, samplePassRoute(route, route.elapsed));
+            this.bounceOffTouchline();
+            if (previous.prevX >= 0 && previous.prevX <= this.maxX) this.bounceOffEndLine(previous);
+            if (route.elapsed >= route.duration) {
+                this.passRoute = null;
+                this.curveForce = 0;
+            }
         } else {
             // Apply physics in smaller sub-steps to ensure Magnus and friction stability at high speeds
             let dtRemaining = Time.deltaTime;
@@ -210,9 +261,14 @@ class Ball extends GameObject {
                 }
 
                 // Move
+                const prevX = this.x, prevY = this.y, prevZ = this.z;
                 this.x += this.vx * dt;
                 this.y += this.vy * dt;
                 this.z += this.vz * dt;
+                this.bounceOffTouchline();
+                if (this.endLineGoals && prevX >= 0 && prevX <= this.maxX && (this.x < 0 || this.x > this.maxX)) {
+                    this.bounceOffEndLine({ prevX, prevY, prevZ });
+                }
 
                 // Bounce on ground
                 if (this.z <= 0) {

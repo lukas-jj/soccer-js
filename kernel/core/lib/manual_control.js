@@ -19,6 +19,8 @@ const { Settings } = require('../../settings.js');
 const { Time } = require('./time.js');
 const { Utils } = require('./utils.js');
 const { SoundDB } = require('./sounddb.js');
+const { armIndirectFreeKick }=require('./match_rules.js');
+const { releaseWallOnPass }=require('./freekick_wall.js');
 const { gameKeyboard } = require('./input_keyboard.js');
 const {
     holdPower01,
@@ -332,11 +334,19 @@ function resolveControlledPlayer(sim, teamKey, prev) {
     if (sim.lockedHumanPlayer) return pool.includes(sim.lockedHumanPlayer) ? sim.lockedHumanPlayer : null;
 
     const ball = sim.ball;
+    if (sim.manualKeeper && ball?.owner?.team === teamKey &&
+        ball.owner.role === 'GK' && !ball.owner.isSentOff) {
+        return ball.owner;
+    }
+
     if (ball && ball.owner && ball.owner.team === teamKey && pool.includes(ball.owner)) {
         return ball.owner;
     }
 
+    if (sim.manualKeeper && sim.manualKeeperSelected && prev?.role === 'GK' && !prev.isSentOff) return prev;
+
     if (prev && pool.includes(prev) && !prev.isSentOff && prev.role !== 'GK') {
+        if (sim.manualDefensiveSwitch) return prev;
         // Keep sticky control while off-ball unless far from play and someone much closer
         if (ball) {
             const prevD = dist2(prev.x, prev.y, ball.x, ball.y);
@@ -492,9 +502,24 @@ function fallbackKickAlongFacing(player, isLob, humanKick, cmd, charge) {
     if (!ball || ball.owner !== player) return;
 
     const hk = humanKick || player.humanKick || null;
-    const dir = (hk && hk.aimDir)
+    let dir = (hk && hk.aimDir)
         ? humanFacingDir(player, { moveX: hk.aimDir.x, moveY: hk.aimDir.y }, charge)
         : humanFacingDir(player, cmd, charge);
+
+    const level = player.level;
+    const isThrow = level.setPieceType === 'throwin';
+    const isCorner = level.setPieceType === 'corner';
+    if (isThrow || isCorner) {
+        const { clampThrowInDirection, clampCornerKickDirection } = require('../entities/player_states_outfield.js');
+        const field = Utils.getFieldBounds();
+        const clamped = isThrow
+            ? clampThrowInDirection(dir.x, dir.y, player, field)
+            : clampCornerKickDirection(dir.x, dir.y, level.setPieceSide, level.setPieceCornerY ?? field.centerY, field);
+        dir = { x: clamped.nx, y: clamped.ny };
+        const spot = level._setPieceBallSpot;
+        if (spot) { ball.x = spot.x; ball.y = spot.y; }
+        ball.z = isThrow ? 2 : 0;
+    }
 
     // Re-orient sprite to kick direction so visuals match the ball
     // ORIENT_DIR: 0=UP(-Y), 2=RIGHT(+X), 4=DOWN(+Y), 6=LEFT(-X)
@@ -543,12 +568,24 @@ function fallbackKickAlongFacing(player, isLob, humanKick, cmd, charge) {
         if (vz < 1.5) vz = 1.5; // lob identity: always airborne
     }
     const curve = hk && typeof hk.curveForce === 'number' ? hk.curveForce : 0;
+    if (isThrow) vz = 2.5;
+    if (isCorner) vz = Math.max(4, vz);
     ball.kick(dir.x * speed, dir.y * speed, vz, curve);
-    SoundDB.play(isLob ? 'lob' : 'pass');
+    if (isThrow || isCorner) {
+        ball.isThrowInFlight = true;
+        level._setPieceBallSpot = null;
+        level.throwInTaker = null;
+        level.setPieceType = '';
+    }
+    SoundDB.play(isThrow ? 'throwin' : isLob ? 'lob' : 'pass');
     player.humanKick = null;
-    // Free-kick path skips Pass FSM — still clear kickoff dead-ball bookkeeping
-    if (player.level && player.level.setPieceType === 'kickoff') {
-        player.level.setPieceType = '';
+    if(level.setPieceType==='freekick'){
+        if(level.setPieceIndirect)armIndirectFreeKick(ball,player);
+        releaseWallOnPass(level);
+        level.setPieceIndirect=false;
+        level.setPieceType='';
+    }else if(level.setPieceType==='kickoff'||level.setPieceType==='goalkick'){
+        level.setPieceType='';
     }
 
     const PlayerStates = getPlayerStates();
@@ -586,6 +623,11 @@ function holdPowerOpts() {
     };
 }
 
+function getManualChargePower(sim) {
+    const charge = getManualCharge(sim);
+    return charge ? holdPower01(charge.ticks, holdPowerOpts()) : 0;
+}
+
 /**
  * Whether Stage 2 release-to-fire is active.
  */
@@ -619,7 +661,17 @@ function startHumanPass(player, passType, cmd, humanKick, charge) {
         && !(humanKick && humanKick.aimAssist === false);
 
     // Soft-lock only if a teammate sits inside the aim cone
-    const decision = assist ? findHumanPassTarget(player, passType, cmd, charge) : null;
+    let decision = assist ? findHumanPassTarget(player, passType, cmd, charge) : null;
+    if (cmd?.directPointerAim) {
+        player.humanKick.directAim = true;
+        player.humanKick.curveForce = 0;
+        if (decision?.teammate) {
+            const ball = player.level.ball;
+            const dx = decision.teammate.x - ball.x;
+            const dy = decision.teammate.y - ball.y;
+            if (Math.abs(dx * aimDir.y - dy * aimDir.x) > 1) decision = null;
+        }
+    }
 
     if (decision && decision.teammate) {
         player.passTarget = decision.teammate;
@@ -699,7 +751,12 @@ function startHumanShoot(player, cmd, humanKick, charge) {
         player.humanKick = { kind: 'shoot', aimDir: { x: aimDir.x, y: aimDir.y } };
     }
 
-    const assist = aimAssistFlags().shoot
+    if (cmd?.directPointerAim) {
+        player.humanKick.directAim = true;
+        player.humanKick.curveForce = 0;
+    }
+
+    const assist = !cmd?.directPointerAim && aimAssistFlags().shoot
         && !(humanKick && humanKick.aimAssist === false);
 
     // Default: directional aim along stick toward goal
@@ -801,6 +858,9 @@ function fireChargedAction(player, action, charge, cmd, sim, teamKey) {
         aimAssist: assist
     });
     hk.aimDir = { x: facing.x, y: facing.y };
+    if (!isLob && sim?.drivenGroundPasses) {
+        hk.speedMul = 1.05 + 0.35 * power;
+    }
     const receiver = startHumanPass(player, isLob ? 'long' : 'short', cmd, hk, charge);
     player._humanInput = null;
     if (receiver && manualOpts().autoSwitchOnPass !== false) {
@@ -1246,6 +1306,30 @@ function applyHumanCommand(player, cmd, sim, teamKey) {
     }
 
     const hasBall = !!(ball && ball.owner === player);
+    if (sim.manualKeeper && player.role === 'GK') {
+        player.gkHoldTimer = 0;
+        if (!hasBall) {
+            clearManualCharge(sim);
+            if (stateName(player) !== 'GkDive') {
+                if (stateName(player) !== 'Goalkeeper') player.fsm.changeState(PlayerStates.Goalkeeper);
+                if (cmd.tackleSlide) {
+                    if (!ball.owner && ball.lastKicker !== player && (ball.lastKicker?.team !== player.team || ball.isShot)
+                        && Math.hypot(player.x - ball.x, player.y - ball.y) < 7) {
+                        player.fsm.changeState(PlayerStates.GkDive);
+                    }
+                }
+            }
+            player._humanInput = { moveX: cmd.moveX || 0, moveY: cmd.moveY || 0, sprint: !!cmd.sprint };
+            return player;
+        }
+        cmd = {
+            ...cmd,
+            lob: cmd.lob || cmd.shoot,
+            lobDown: cmd.lobDown || cmd.shootDown,
+            lobReleased: cmd.lobReleased || cmd.shootReleased,
+            shoot: false, shootDown: false, shootReleased: false
+        };
+    }
 
     if (hasBall) {
         // Ensure dribble state for carry (AI assign skips human)
@@ -1364,7 +1448,7 @@ function applyHumanCommand(player, cmd, sim, teamKey) {
         return player;
     }
 
-    if (cmd.tackleSlide && ball && ball.owner && ball.owner.team !== player.team) {
+    if (sim.allowManualSlides !== false && cmd.tackleSlide && ball && ball.owner && ball.owner.team !== player.team) {
         if (helpers.canTackleOwner(ball.owner) && (!player.tackleAttemptCooldown || player.tackleAttemptCooldown <= 0)) {
             const launchDist = (Settings.AI && Settings.AI.SLIDE_LAUNCH_DIST) || 3.2;
             const launch = slideLaunchTarget(
@@ -1409,6 +1493,7 @@ function applyHumanCommand(player, cmd, sim, teamKey) {
  */
 function applyHumanMovement(player) {
     if (!player || !player.humanControlled) return false;
+    if (player.bargeCharging) return true;
     // Stage 3 animation lock: freeze feet + recovery frames
     if (player.actionTimer > 0) {
         player._currentSpeed = 0;
@@ -1434,13 +1519,20 @@ function applyHumanMovement(player) {
     const ball = player.level && player.level.ball;
 
     // Always try to claim loose ball when close
-    if (ball && ball.owner === null && typeof helpers.tryClaimLooseBall === 'function') {
+    if (ball && ball.owner === null && !(player.role === 'GK' && player.level?.manualKeeper)
+        && typeof helpers.tryClaimLooseBall === 'function') {
         if (helpers.tryClaimLooseBall(player, ball)) {
             return true;
         }
     }
 
     if (!inp || (Math.abs(inp.moveX) < 1e-6 && Math.abs(inp.moveY) < 1e-6)) {
+        const arc = player.level?.arcAssist;
+        if (arc?.receiver === player && ball?.owner === null && ball.lastKicker === arc.wizard
+            && Time.time <= arc.receiveAt + 0.25) {
+            player.moveTo(arc.landing, 1, { arrive: true });
+            return true;
+        }
         player._currentSpeed = Math.max(0, (player._currentSpeed || 0) * 0.75);
         if (!player.isSliding) player.frame = 0;
         return true;
@@ -1473,7 +1565,7 @@ function tickManualControl(sim, opts = {}) {
     // Kickoff: AI lays off the ball. No move / pass / switch until open play.
     if (isKickoffControlBlocked(sim)) {
         sim._manualCameraActive = false;
-        if (sim._manualControlled) {
+        if (sim._manualControlled && !sim.manualDefensiveSwitch) {
             sim._manualControlled.A = null;
             sim._manualControlled.B = null;
         }
@@ -1519,7 +1611,10 @@ function tickManualControl(sim, opts = {}) {
             if (['Wait', 'Receive', 'GoHome'].includes(stateName(chosen))) {
                 chosen.fsm.changeState(getPlayerStates().Idle);
             }
-            applyHumanCommand(chosen, { ...cmd, switchPlayer: false }, sim, 'A');
+            const lockedCommand = { ...cmd, switchPlayer: false };
+            if (!sim.tryManualPower?.(chosen, lockedCommand)) {
+                applyHumanCommand(chosen, lockedCommand, sim, 'A');
+            }
             chosen.isActivePlayer = true;
             if (cmd.callPass && sim.teamA) {
                 if (typeof sim.requestHumanPass === 'function') sim.requestHumanPass();
@@ -1531,6 +1626,15 @@ function tickManualControl(sim, opts = {}) {
         if (manualOpts().cameraFollow !== false) updateManualCameraFollow(sim, chosen);
         else sim._manualCameraActive = false;
         return;
+    }
+
+    if (sim.manualDefensiveSwitch && cmd.switchPlayer) {
+        if (sim.ball?.owner?.team === 'A' && (sim.manualKeeper || sim.ball.owner.role !== 'GK')) {
+            cmd.switchPlayer = false;
+        } else {
+            sim._manualPendingReceiver = null;
+            sim._manualPassSwitchTicks = 0;
+        }
     }
 
     // Sticky receiver after auto-switch (until they get the ball or timeout).
@@ -1545,7 +1649,7 @@ function tickManualControl(sim, opts = {}) {
         }
         const ball = sim.ball;
         const owner = ball && ball.owner;
-        if (owner === r) {
+        if (owner === r || (sim.manualDefensiveSwitch && owner?.role === 'GK' && !isBusyKicking(owner))) {
             sim._manualPendingReceiver = null;
             sim._manualPassSwitchTicks = 0;
         } else if (owner && owner.team !== 'A') {
@@ -1595,9 +1699,25 @@ function tickManualControl(sim, opts = {}) {
         }
     }
 
+    if (sim.manualKeeper) {
+        if (cmd.switchPlayer || sim.ball.owner?.team === 'A') sim.manualKeeperSelected = false;
+        if (cmd.switchKeeper && sim.ball.owner?.team !== 'A') {
+            const keeper = sim.teamA.getGoalkeeper(true);
+            sim.manualKeeperSelected = !sim.manualKeeperSelected && !!keeper && !keeper.isSentOff;
+            sim._manualPendingReceiver = null;
+            controlled = sim.manualKeeperSelected ? keeper : resolveControlledPlayer(sim, 'A', null);
+            cmd.switchPlayer = false;
+        }
+    }
+
     if (controlled) {
+        if (sim.manualDefensiveSwitch && controlled !== sim._manualControlled.A && !sim._manualPendingReceiver) {
+            clearManualCharge(sim);
+        }
         controlled.humanControlled = true;
-        controlled = applyHumanCommand(controlled, cmd, sim, 'A');
+        if (!sim.tryManualPower?.(controlled, cmd)) {
+            controlled = applyHumanCommand(controlled, cmd, sim, 'A');
+        }
         if (controlled) {
             controlled.humanControlled = true;
             controlled.isActivePlayer = true;
@@ -1650,6 +1770,7 @@ module.exports = {
     updateManualCameraFollow,
     recordManualInput,
     clearManualCharge,
+    getManualChargePower,
     fireChargedAction,
     holdToPowerEnabled,
     aimAssistFlags,

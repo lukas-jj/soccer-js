@@ -104,6 +104,15 @@ class Goal extends GameObject {
         return { left, right };
     }
 
+    setCenterY(y) {
+        const halfWidth = (this.yMax - this.yMin) * 0.5;
+        this.center.y = this.y = y;
+        this.leftPost.y = this.yMin = y - halfWidth;
+        this.rightPost.y = this.yMax = y + halfWidth;
+        this.updateGlobalPos();
+        if (!this.parent?.drawLiveGoals) this.parent?.invalidateRenderCache?.();
+    }
+
     /** Mouth center on the goal line. */
     Center() {
         return { x: this.center.x, y: this.center.y };
