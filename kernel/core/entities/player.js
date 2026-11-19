@@ -750,7 +750,7 @@ function computeShootKick(carrier) {
     const shotAngleScale = (Settings.AI && typeof Settings.AI.SHOOT_ANGLE_NOISE_SCALE === 'number')
         ? Settings.AI.SHOOT_ANGLE_NOISE_SCALE
         : 0.0055;
-    const noisy = applyKickDirectionNoise(nx, ny, carrier.effectiveAccuracy || 70, {
+    const noisy = hk?.directAim ? {nx:hk.aimDir.x,ny:hk.aimDir.y} : applyKickDirectionNoise(nx, ny, carrier.effectiveAccuracy || 70, {
         angleScale: shotAngleScale
     });
     let curveForce = sampleKickCurveForce(carrier.effectiveShooting || 65);
@@ -796,7 +796,7 @@ function estimatePlayerTopSpeed(player) {
         ? player.staminaMultiplier
         : (player.currentStamina != null ? player.currentStamina : 1);
     const speedBonus = (baseStats / 100.0) * bonusMax * stam;
-    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1);
+    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1) * (player.movementScale ?? 1) * (player.movementEffectScale ?? 1) * (player.smokeBoostUntil > Time.time ? 1.65 : 1);
 }
 
 function computeLooseBallInterceptTarget(chaser, ball) {
@@ -928,12 +928,14 @@ function tryClaimLooseBall(player, ball) {
             && !(Settings.manualControl && Settings.manualControl.blockAutoHeader === false);
         if (player.role !== 'GK' && !blockHeader) {
             if (player.fsm.currentState !== PlayerStates.Header) {
+                const arc = player.level?.arcAssist;
+                const bending = arc && ball.lastKicker === arc.wizard && Math.abs(ball.curveForce) > 1;
                 const opp = findHeaderOpportunity(ball, {
                     x: player.x,
                     y: player.y,
                     speed: estimatePlayerTopSpeed(player)
                 }, {
-                    contactRadius: Math.max(1.6, ai(player).BALL_CLAIM_RANGE * 1.6),
+                    contactRadius: bending ? 1 : Math.max(1.6, ai(player).BALL_CLAIM_RANGE * 1.6),
                     maxTime: 0.85,
                     jumpLead: 0.45
                 });
@@ -957,7 +959,10 @@ function tryClaimLooseBall(player, ball) {
     // Own-pass reclaim (same player as lastKicker) is always clean — avoids
     // post-pass fumble loops where the passer re-pops the ball for seconds.
     const ownPass = !!(ball.lastKicker && ball.lastKicker === player);
-    const touch = applyFirstTouch(player, ball, { forceClean: ownPass });
+    const arc = player.level?.arcAssist;
+    const arcReception = arc?.receiver === player && ball.lastKicker === arc.wizard;
+    const practiceReturn = arc?.practiceReturning && arc.wizard === player && ball.lastKicker === arc.receiver;
+    const touch = applyFirstTouch(player, ball, { forceClean: ownPass || arcReception || practiceReturn });
     if (touch.fumbled) {
         SoundDB.play('touch');
         // Stay in current FSM (Receive continues hunt after claim lock; Idle re-evaluates)
@@ -1225,7 +1230,7 @@ function applyGlobalPlayerState(player) {
  */
 function maybeTriggerTackleFoul(tackler, opponent, tackleType, a, opts = {}) {
     const level = tackler && tackler.level;
-    if (!level || typeof level.triggerFoul !== 'function') return false;
+    if (!level || level.practice || typeof level.triggerFoul !== 'function') return false;
 
     let foulChance = 0;
     if (opts.forceChance != null) {
@@ -1496,6 +1501,7 @@ class Player extends GameObject {
     }
 
     getSpriteSheet() {
+        if (this.mimicPlayer) return this.mimicPlayer.getSpriteSheet();
         if (this._cachedSpriteSheet) return this._cachedSpriteSheet;
         if (!this.level) return null;
         const teamName = this.team === 'A' ? this.level.teamAName : this.level.teamBName;
@@ -1852,7 +1858,7 @@ class Player extends GameObject {
      * }} [steerOpts] - when omitted: seek at full speed (backward compatible)
      */
     moveTo(target, speedMultiplier = 1, steerOpts = null) {
-        if (!target) return;
+        if (!target || this.slimeWindup || this.bargeWindup || this.bargeCharging) return;
 
         let aimX = target.x;
         let aimY = target.y;
@@ -1903,9 +1909,10 @@ class Player extends GameObject {
             const possessionMul = (typeof this._possessionSpeedMul === 'number')
                 ? this._possessionSpeedMul
                 : globalPossessionSpeedMul(this);
-            const topSpeed = (pBase + speedBonus) * Settings.SPRITE_SPEED
+            const movementSpeed = Settings.SPRITE_SPEED * (this.movementScale ?? 1) * (this.movementEffectScale ?? 1) * (this.smokeBoostUntil > Time.time ? 1.65 : 1);
+            const topSpeed = (pBase + speedBonus) * movementSpeed
                 * speedMultiplier * speedScale * possessionMul;
-            let acceleration = (aBase + (baseStats / 100.0) * aBonus * this.staminaMultiplier) * Settings.SPRITE_SPEED;
+            let acceleration = (aBase + (baseStats / 100.0) * aBonus * this.staminaMultiplier) * movementSpeed;
 
             // Goalkeepers have explosive reflex acceleration
             if (this.role === 'GK') {
@@ -2219,6 +2226,7 @@ class Player extends GameObject {
             return;
         }
 
+        if (this.level?.moveHazardPlayer?.(this)) return;
         this.fsm.update();
 
         // Clamp player to field boundaries to prevent walking freely along/outside the sidelines
@@ -2228,7 +2236,7 @@ class Player extends GameObject {
         const isThrowInTaker = this.level && this.level.matchState === 'throwin' &&
           ( (this.level.ball && this.level.ball.owner === this) || this.isWalkingToSetPiece );
 
-        if (this.role !== 'GK' && !isThrowInTaker) {
+        if ((this.role !== 'GK' || (this.humanControlled && this.level?.manualKeeper)) && !isThrowInTaker) {
             this.x = Math.max(margin, Math.min(field.width - margin, this.x));
             this.y = Math.max(margin, Math.min(field.height - margin, this.y));
         }

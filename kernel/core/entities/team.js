@@ -312,7 +312,7 @@ class Team extends GameObject {
      * @param {string} opts.code - FIFA 3-letter prefix for jersey names
      */
     createPlayers({ formation, teamStatsList = null, defaultStats = {}, code = 'XXX', playerCount = 11 }) {
-        if (![5, 11].includes(playerCount) || !formation || formation.length !== playerCount) {
+        if (![1, 2, 3, 4, 5, 11].includes(playerCount) || !formation || formation.length !== playerCount) {
             throw new Error(`Team ${this.teamKey}: formation must define ${playerCount} slots`);
         }
 

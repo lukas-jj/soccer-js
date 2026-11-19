@@ -297,7 +297,7 @@ function futurePosition(ball, time, opts = {}) {
     if (!ball) return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
     const bz = ball.z || 0;
     const bvz = ball.vz || 0;
-    if (bz > 0.0001 || bvz > 0) {
+    if (ball.touchlineBoards || bz > 0.0001 || bvz > 0) {
         return predict3D(ball, time, opts);
     }
     const groundPred = futurePositionFromVelocity(
@@ -325,7 +325,54 @@ function futurePosition(ball, time, opts = {}) {
  * @param {object} [opts]
  * @returns {{ x: number, y: number, z: number, vx: number, vy: number, vz: number }}
  */
+function samplePassRoute(route, elapsed) {
+    let t = Math.max(0, Math.min(1, elapsed / route.duration));
+    const lengths = route.lengths;
+    if (lengths && t > 0 && t < 1) {
+        const distance = lengths.at(-1) * t;
+        const i = lengths.findIndex(length => length >= distance);
+        t = (i - 1 + (distance - lengths[i - 1]) / (lengths[i] - lengths[i - 1])) / (lengths.length - 1);
+    }
+    const phase = Math.PI * t;
+    const wave = Math.sin(phase);
+    const side = route.bend * wave * wave;
+    const sideSpeed = route.bend * Math.PI * Math.sin(2 * phase) / route.duration;
+    const dx = route.end.x - route.start.x;
+    const dy = route.end.y - route.start.y;
+    const forwardSpeed = t === 1 ? 0.18 : 1 / route.duration;
+    const vx = dx * forwardSpeed + route.normal.x * sideSpeed;
+    const vy = dy * forwardSpeed + route.normal.y * sideSpeed;
+    const pace = lengths && t < 1 ? lengths.at(-1) / route.duration / Math.hypot(vx, vy) : 1;
+    return {
+        x: route.start.x + dx * t + route.normal.x * side,
+        y: route.start.y + dy * t + route.normal.y * side,
+        z: t === 1 ? 0 : route.height * wave * wave,
+        vx: vx * pace,
+        vy: vy * pace,
+        vz: t === 1 ? 0 : route.height * Math.PI * Math.sin(2 * phase) / route.duration * pace
+    };
+}
+
+function touchlineRebound(y, vy, height, radius) {
+    const top = radius;
+    const bottom = height - radius;
+    if (y < top) return { y: Math.min(bottom, top + (top - y) * .84), vy: vy < 0 ? -vy * .84 : vy };
+    if (y > bottom) return { y: Math.max(top, bottom - (y - bottom) * .84), vy: vy > 0 ? -vy * .84 : vy };
+    return null;
+}
+
+function endLineRebound(sample, vx, width, radius, goals) {
+    if (!goals || (sample.x >= 0 && sample.x <= width)) return null;
+    const goal = sample.x < 0 ? goals.left : goals.right;
+    if (goal.isGoalEvent(sample)) return null;
+    const rebound = touchlineRebound(sample.x, vx, width, radius);
+    return { x: rebound.y, vx: rebound.vy };
+}
+
 function predict3D(ball, time, opts = {}) {
+    if (ball.passRoute && !ball.owner) {
+        return samplePassRoute(ball.passRoute, ball.passRoute.elapsed + time);
+    }
     let x = ball.x;
     let y = ball.y;
     let z = ball.z || 0;
@@ -380,9 +427,31 @@ function predict3D(ball, time, opts = {}) {
         }
 
         // Move
+        const prevX = x, prevY = y, prevZ = z;
         x += vx * dt;
         y += vy * dt;
         z += vz * dt;
+        if (ball.touchlineBoards && x >= 0 && x <= ball.maxX) {
+            const rebound = touchlineRebound(y, vy, ball.maxY, ball.radius);
+            if (rebound) {
+                if (rebound.vy !== vy) curveForce *= -.55;
+                y = rebound.y;
+                vy = rebound.vy;
+            }
+        }
+
+        if (ball.endLineGoals && prevX >= 0 && prevX <= ball.maxX && (x < 0 || x > ball.maxX)) {
+            const rebound = endLineRebound({ x, y, z, prevX, prevY, prevZ }, vx, ball.maxX, ball.radius, ball.endLineGoals);
+            if (rebound) {
+                if (rebound.vx !== vx) curveForce *= -.55;
+                ({ x, vx } = rebound);
+                const side = ball.touchlineBoards && touchlineRebound(y, vy, ball.maxY, ball.radius);
+                if (side) {
+                    if (side.vy !== vy) curveForce *= -.55;
+                    ({ y, vy } = side);
+                }
+            }
+        }
 
         // Bounce on ground
         if (z <= 0) {
@@ -790,6 +859,9 @@ function buildNoisyKickVelocity(nx, ny, speed, opts = {}) {
 }
 
 module.exports = {
+    samplePassRoute,
+    touchlineRebound,
+    endLineRebound,
     GROUND_FRICTION_BASE,
     BALL_STOP_SPEED,
     FRICTION_K,

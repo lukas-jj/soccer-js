@@ -43,6 +43,12 @@ async function setup(){
  const marker=s.teamB.players[1];marker.x=19;marker.y=20;
  s.requestHumanPass();s.updatePlayerAIStates();
  assert.equal(s.humanCallFeedback.text,'GET OPEN');assert.ok(s._humanCallUntil>Time.time,'blocked call waits rather than forcing a pass through defender');
+ const deadline=s._humanCallUntil;
+ Time.time+=1.5;s.requestHumanPass();
+ assert.equal(s._humanCallUntil,deadline,'repeated calls do not renew the request');
+ s.updatePlayerAIStates();assert.equal(s.humanCallFeedback.text,'GET OPEN');
+ marker.x=46;marker.y=3;s.updatePlayerAIStates();
+ assert.equal(s.humanCallFeedback.text,'PASS COMING','moving into space satisfies the original call');
  ({m,s,p,carrier}=await setup());p.x=50;p.y=30;carrier.x=5;carrier.y=20;
  s.requestHumanPass();s.updatePlayerAIStates();assert.equal(s.humanCallFeedback.text,'MOVE CLOSER');
  console.info('5v5 requested, backward, natural and physically received passes passed');

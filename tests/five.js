@@ -47,6 +47,33 @@ Settings.app={camX:0,camY:0,canvas:{width:1280,height:800}};
  assert.equal(m.player.fsm.getNameOfCurrentState(),'Shoot');
  for(let i=0;i<25;i++){Time.advanceFixedLogicStep();m.player.update();m.sim.ball.update();}
  assert.notEqual(m.sim.ball.owner,m.player);assert.ok(Math.hypot(m.sim.ball.vx,m.sim.ball.vy)>0);
+
+ async function shotSpeed(holdTicks,button){
+  const game=await FiveMatch.create('kowalski',77,{headless:true});
+  const {player:p,sim:s,input}=game;
+  Settings.HEADLESS=false;
+  s.matchState='play';s.setPieceType='';
+  p.x=37;p.y=17;p.actionTimer=0;
+  s.ball.owner=p;s.ball.x=p.x;s.ball.y=p.y;s.ball.z=0;
+  p.fsm.changeState(PlayerStates.Dribble);
+  input.aim={x:1,y:0};
+  input.press(button);
+  for(let i=0;i<holdTicks;i++)tickManualControl(s);
+  input.release(button);tickManualControl(s);
+  assert.equal(p.fsm.getNameOfCurrentState(),'Shoot');
+  for(let i=0;i<25&&s.ball.owner===p;i++){Time.advanceFixedLogicStep();p.update();}
+  assert.notEqual(s.ball.owner,p);
+  return Math.hypot(s.ball.vx,s.ball.vy);
+ }
+ const tap=await shotSpeed(0,'KeyK');
+ assert.ok(tap>0);
+ assert.ok(await shotSpeed(12,'MouseRight')>tap*1.5,'full charge releases a faster physical shot than a tap');
+ for(let i=0;i<100;i++){Time.advanceFixedLogicStep();m.updateSprintReserve(true);}
+ assert.equal(m.sprintReserve,0);
+ m.input.press('ShiftLeft');assert.equal(m.input.pollFrame().command.sprint,false);
+ for(let i=0;i<24;i++){Time.advanceFixedLogicStep();m.updateSprintReserve(false);}
+ assert.ok(m.sprintReserve>=.25);
+ assert.equal(m.input.pollFrame().command.sprint,true);
  Settings.HEADLESS=true;
  const full=await FiveMatch.create(CHARACTERS[2].id,91,{headless:true,duration:12});
  for(let i=0;i<40000&&!full.finished;i++)full.step();

@@ -135,6 +135,36 @@ async function main() {
 
     // --- GK 3D selective dive target tests ---
     const gk = sim.teamA.getGoalkeeper();
+    // A teammate carrying near goal must not trigger a keeper interception.
+    const teammate = sim.teamA.players.find(p => p.role !== 'GK');
+    gk.x = 2;
+    gk.y = 25;
+    gk.actionTimer = 0;
+    gk.gkReleaseCooldown = 0;
+    teammate.x = 2.5;
+    teammate.y = 25;
+    sim.ball.owner = teammate;
+    sim.ball.x = teammate.x;
+    sim.ball.y = teammate.y;
+    sim.ball.prevX = teammate.x;
+    sim.ball.prevY = teammate.y;
+    sim.ball.z = 0;
+    sim.ball.vx = sim.ball.vy = sim.ball.vz = 0;
+    sim.ball.isShot = false;
+    const moveTo = gk.moveTo;
+    let keeperTarget;
+    gk.moveTo = target => { keeperTarget = target; };
+    gk.fsm.changeState(PlayerStates.Goalkeeper);
+    PlayerStates.Goalkeeper.execute(gk);
+    assert.strictEqual(sim.ball.owner, teammate, 'keeper leaves teammate possession intact');
+    assert.ok(keeperTarget && (keeperTarget.x !== sim.ball.x || keeperTarget.y !== sim.ball.y),
+        'keeper tends goal instead of chasing teammate');
+    // A dive already in progress must also leave teammate possession intact.
+    gk.fsm.changeState(PlayerStates.GkDive);
+    PlayerStates.GkDive.execute(gk);
+    assert.strictEqual(sim.ball.owner, teammate, 'diving keeper cannot steal from teammate');
+    gk.moveTo = moveTo;
+    log('PASS keeper respects teammate possession while standing and diving');
     gk.x = 2;
     gk.y = 25;
     gk.fsm.setCurrentState(PlayerStates.Goalkeeper);
