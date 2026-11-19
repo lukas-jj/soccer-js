@@ -626,12 +626,19 @@ function runBarge(sim){
   practice.input.press('MouseRight');practice.step();
   assert.equal(arcShotBall.owner,practice.player,'holding Shoot keeps possession');
   const shot=practice.sim.arcCast.shot;
-  const initialCurve=shot.flight.kick.curveForce;
+  const initialBend=shot.flight.route.bend;
   practice.input.aim={x:0,y:1};
   practice.step(8);
   assert.deepEqual(shot.aim,{x:1,y:0},'steering shapes the bend without moving the locked shot aim');
   const preview=shot.flight;
-  assert.ok(Math.abs(preview.kick.curveForce)>Math.abs(initialCurve));
+  assert.ok(Math.abs(preview.route.bend)>Math.abs(initialBend));
+  assert.ok(preview.route.bend>0,'steering chooses the side of the opening bend');
+  const route=preview.route;
+  const sample=t=>samplePassRoute(route,t*route.duration);
+  const pace=t=>Math.hypot(sample(t).vx,sample(t).vy);
+  assert.ok(pace(.1)<pace(.5)&&pace(.5)<pace(.95),'shot accelerates from wind-up to finish');
+  assert.ok(Math.abs(sample(.4).vy)>.1,'shot curves early');
+  assert.equal(sample(.85).vy,0,'the finish runs straight toward the aim');
   assert.ok(Math.abs(preview.kick.vx)>Math.abs(preview.kick.vy),'the shot still travels toward the original aim');
   practice.input.aim={x:-1,y:0};
   practice.input.release('MouseRight');practice.step();
@@ -642,8 +649,21 @@ function runBarge(sim){
   practice.step(8);
   assert.ok(Math.abs(arcShotBall.x-preview.preview[9].x)<1e-8);
   assert.ok(Math.abs(arcShotBall.y-preview.preview[9].y)<1e-8);
-  assert.ok(Math.hypot(arcShotBall.vx,arcShotBall.vy)<=Settings.physics.SHOOT_SPEED_BASE+Settings.physics.SHOOT_SPEED_STAT_SCALE+.02);
+
  }
+ practice.resetPractice('mendes');
+ practicePossession();
+ practice.input.aim={x:1,y:0};
+ practice.input.press('Space');practice.step();practice.input.release('Space');
+ const movingRune=practice.player;
+ const runStart={x:movingRune.x,y:movingRune.y};
+ practice.input.press('KeyD');practice.input.press('MouseRight');practice.step(5);
+ assert.ok(Math.hypot(movingRune.x-runStart.x,movingRune.y-runStart.y)>.2,'Rune can run while shaping the shot');
+ const releaseX=movingRune.x,releaseY=movingRune.y;
+ practice.input.release('MouseRight');practice.step();
+ assert.ok(Math.hypot(movingRune.x-releaseX,movingRune.y-releaseY)>.01,'Rune keeps running through release');
+ assert.equal(practice.sim.ball.isShot,true);
+ practice.input.release('KeyD');
  practice.resetPractice('tele-pass');
  practicePossession();
  assert.equal(practice.sim.teamA.getOutfieldPlayers().length,1);

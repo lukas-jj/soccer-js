@@ -6,7 +6,7 @@ const {PlayerStates,applyActionLock,canTackleOwner}=require('../core/entities/pl
 const {humanFacingDir,orientationDir,isBusyKicking,clearManualCharge}=require('../core/lib/manual_control.js');
 const {estimatePassGroundSpeed,isPassSafeFromAllOpponents}=require('../core/lib/pass_safety.js');
 const {armKickerClaimCooldown}=require('../core/lib/logic_regulator.js');
-const {samplePassRoute,predict3D}=require('../core/lib/ball_prediction.js');
+const {samplePassRoute}=require('../core/lib/ball_prediction.js');
 
 const {holdPower01}=require('../core/lib/manual_commands.js');
 const {deploySmoke,startBlazeSlide}=require('./hazards.js');
@@ -458,23 +458,20 @@ function spinKick(sim,player,cmd){
 function arcShotFlight(sim,player,dir,side=dir.y>0?-1:1,ticks=0){
  const ball=sim.ball;
  const {maxX,maxY}=ball;
- const xRange=dir.x>0?(maxX-ball.x)/dir.x:dir.x<0?-ball.x/dir.x:Infinity;
- const yRange=dir.y>0?(maxY-ball.y)/dir.y:dir.y<0?-ball.y/dir.y:Infinity;
- const range=Math.min(20,xRange,yRange);
+ const xRange=dir.x>0?(maxX+ball.radius-ball.x)/dir.x:dir.x<0?(-ball.radius-ball.x)/dir.x:Infinity;
+ const yRange=dir.y>0?(maxY-ball.radius-ball.y)/dir.y:dir.y<0?(ball.radius-ball.y)/dir.y:Infinity;
+ const range=Math.max(.15,Math.min(22,xRange,yRange));
  const charge=Math.min(1,ticks/ARC_BEND_TICKS);
- const curveForce=side*(8+charge*(player.powerLevel===2?8:5));
- const angle=Math.atan2(dir.y,dir.x)-Math.sign(curveForce)*Math.min(.5,Math.max(0,range)*.016*Math.abs(curveForce)/8);
+ const bend=side*Math.min(2.2,range*(.065+charge*(player.powerLevel===2?.035:.025)));
  const {SHOOT_SPEED_BASE=11,SHOOT_SPEED_STAT_SCALE=6}=Settings.physics;
  const speed=SHOOT_SPEED_BASE+(player.effectiveShooting||65)*SHOOT_SPEED_STAT_SCALE/100;
- const kick={vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,vz:1.5,curveForce};
- const sample={...ball,...kick,owner:null,passRoute:null};
- const preview=[{x:ball.x,y:ball.y,z:ball.z}];
- for(let i=1;i<=24;i++){
-  const point=predict3D(sample,i*.05);
-  preview.push(point);
-  if(point.x<=0||point.x>=maxX||point.vx*kick.vx<0||point.vy*kick.vy<0&&point.y<=ball.radius*2)break;
- }
- return {kick,preview,shot:true};
+ const route={
+  start:{x:ball.x,y:ball.y,z:ball.z},
+  end:{x:ball.x+dir.x*range,y:ball.y+dir.y*range},
+  normal:{x:-dir.y,y:dir.x},bend,duration:range/speed,height:.42,elapsed:0,shot:true
+ };
+ const preview=Array.from({length:Math.ceil(route.duration/.05)+1},(_,i)=>samplePassRoute(route,i*.05));
+ return {route,preview,shot:true,kick:{...preview[0],route}};
 }
 function shootArc(sim,player,flight){
  passTo(sim,player,null,flight.kick,false);
@@ -482,7 +479,7 @@ function shootArc(sim,player,flight){
  sim.arcAssist=null;
  if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
  SoundDB.play('shot');
- return {text:'Swerve Shot',handled:true};
+ return {text:'Swerve Shot',handled:false};
 }
 function tickArcPass(sim,player,cmd,upgrades){
  let cast=sim.arcCast;
@@ -503,16 +500,19 @@ function tickArcPass(sim,player,cmd,upgrades){
  if(!cast.target&&(cmd.shoot||cast.shot)){
   const aim=humanFacingDir(player,cmd);
   const shot=cast.shot??={aim,side:aim.y>0?-1:1,ticks:0};
-  if(cmd.shootReleased){
+  const {shootReleased,shootDown}=cmd;
+  cmd.shoot=cmd.shootDown=cmd.shootReleased=cmd.tackleBody=false;
+  cmd.pass=cmd.passDown=cmd.passReleased=cmd.tackleFoot=false;
+  if(shootReleased){
    sim.arcCast=null;
-   return shootArc(sim,player,shot.flight??arcShotFlight(sim,player,shot.aim,shot.side));
+   return shootArc(sim,player,arcShotFlight(sim,player,shot.aim,shot.side,shot.ticks));
   }
-  if(!cmd.shootDown){sim.arcCast=null;return {handled:true};}
+  if(!shootDown){sim.arcCast=null;return {handled:false};}
   const steer=shot.aim.x*aim.y-shot.aim.y*aim.x;
-  if(Math.abs(steer)>.2)shot.side=-Math.sign(steer);
+  if(Math.abs(steer)>.2)shot.side=Math.sign(steer);
   cast.ticks=++shot.ticks;
   cast.flight=shot.flight=arcShotFlight(sim,player,shot.aim,shot.side,shot.ticks);
-  return {handled:true};
+  return {handled:false};
  }
  if(player.powerLevel===2&&!cast.target&&!cmd.pass){
   cast.flight=arcShotFlight(sim,player,humanFacingDir(player,cmd));
