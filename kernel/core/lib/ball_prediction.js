@@ -327,6 +327,26 @@ function futurePosition(ball, time, opts = {}) {
  */
 function samplePassRoute(route, elapsed) {
     let t = Math.max(0, Math.min(1, elapsed / route.duration));
+    if (route.shot) {
+        const progress = t * (0.48 + 0.52 * t);
+        const speed = (0.48 + 1.04 * t) / route.duration;
+        const bendEnd = 0.58;
+        const phase = Math.PI * Math.min(1, progress / bendEnd);
+        const side = route.bend * Math.sin(phase) ** 2;
+        const sideSpeed = progress < bendEnd
+            ? route.bend * Math.PI / bendEnd * Math.sin(2 * phase) * speed
+            : 0;
+        const dx = route.end.x - route.start.x;
+        const dy = route.end.y - route.start.y;
+        return {
+            x: route.start.x + dx * progress + route.normal.x * side,
+            y: route.start.y + dy * progress + route.normal.y * side,
+            z: route.start.z * (1 - progress) + route.height * Math.sin(Math.PI * progress),
+            vx: dx * speed + route.normal.x * sideSpeed,
+            vy: dy * speed + route.normal.y * sideSpeed,
+            vz: t === 1 ? 0 : (route.height * Math.PI * Math.cos(Math.PI * progress) - route.start.z) * speed
+        };
+    }
     const lengths = route.lengths;
     if (lengths && t > 0 && t < 1) {
         const distance = lengths.at(-1) * t;
