@@ -613,7 +613,7 @@ class FiveMatch {
    if(ball.owner===wizard||!ball.passRoute){
     receiver.frame=0;
     if(!ball.owner)tryClaimLooseBall(wizard,ball);
-    if(ball.owner===wizard)this.feedback={text:'Arc Pass ready',until:Time.time+2};
+    if(ball.owner===wizard)this.feedback={text:'Swerve ready',until:Time.time+2};
     s.arcAssist=null;
    }
    return;
@@ -668,7 +668,7 @@ class FiveMatch {
   if(this.upgrades.has('encore')&&assist.receiver!==assist.wizard&&sim.scoreA>scoreBefore
     &&Time.time<=assist.until&&sim.ball.lastKicker===assist.receiver){
    assist.wizard.powerReadyAt=Time.time;
-   this.feedback={text:'Arc Encore restored Arc Pass',until:Time.time+3};
+   this.feedback={text:'Arc Encore restored Swerve',until:Time.time+3};
   }
   if(Time.time>assist.until||sim.scoreA>scoreBefore||(sim.ball.owner&&sim.ball.owner!==assist.receiver)){
    sim.arcAssist=null;

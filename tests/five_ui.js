@@ -158,8 +158,8 @@ const tick=()=>{frameTime=Math.max(frameTime,performance.now())+100;nextFrame(fr
  listeners.get('pitch:mousedown')(pointer);tick();
  assert.match(nodes.get('power-text').textContent,/BEND/);
  listeners.get('window:mouseup')(pointer);tick();
- assert.equal(nodes.get('call-feedback').textContent,'Arc Pass');
- assert.equal(nodes.get('message').textContent,'','Arc Pass effect renders without pausing the match');
+ assert.equal(nodes.get('call-feedback').textContent,'Swerve Pass');
+ assert.equal(nodes.get('message').textContent,'','Swerve effect renders without pausing the match');
  await clickData('practice-player','tele-pass');tick();collect();
  assert.match(nodes.get('practice-tip').textContent,/Press Space.*left click/);
  const alt=event;

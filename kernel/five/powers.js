@@ -22,7 +22,7 @@ const SPIN_RADIUS=3.2,SPIN_DURATION=.38;
 const CLASSIC_POWERS={
  price:{name:'Orc Barge',hint:'Aim and press Space to charge through players on either team. Your ball spills ahead.',extra:'charge',cooldown:12,icon:'barge',level2:'Press Space to charge with more knockback and a longer stun. Carrying the ball makes the charge faster and longer.'},
  cole:{name:'Shadow Step',hint:'Hold a direction and press Space to dash.',extra:'shadow',cooldown:8,icon:'dash',level2:'Hold a direction and press Space to dash. Press Space again for a second dash.'},
- mendes:{name:'Arc Pass',hint:'Press Space to aim a curved pass. Click to send it, or hold and steer to shape it.',extra:'swerve',cooldown:10,icon:'arc',level2:'Press Space, then pass or shoot to bend the ball.'}
+ mendes:{name:'Swerve',hint:'Press Space, then hold Pass or Shoot. Steer the bend and release to kick.',extra:'swerve',cooldown:10,icon:'arc',level2:'Swerve shots can bend more at full charge.'}
 };
 const POWERS={...CLASSIC_POWERS,price:SPIN_KICK,mendes:GOAL_WARP};
 const RECRUIT_POWERS={
@@ -197,7 +197,7 @@ function arcFlight(from,target,opponents,curve,side){
   return along>1&&along<distance-1&&Math.abs(x*normal.x+y*normal.y)<1.4;
  });
  const flights=[];
- for(const sign of side?[side]:[-1,1]){
+ for(const sign of side?[-side]:[-1,1]){
   const bend=Math.min(distance*.37,curve*.34)*sign;
   const lengths=[0];
   let previous=0;
@@ -231,8 +231,9 @@ function pickArcTarget(sim,player,cmd){
   .map(p=>{
    const dx=p.x-from.x,dy=p.y-from.y,distance=Math.hypot(dx,dy);
    return {p,distance,alignment:(dx*dir.x+dy*dir.y)/(distance||1)};
-  }).filter(p=>p.distance>=2&&p.distance<=25&&p.alignment>=.35)
-  .sort((a,b)=>(b.alignment-a.alignment)*40+a.distance-b.distance)[0]?.p;
+  }).filter(p=>p.distance>=3&&p.distance<=22)
+  .sort((a,b)=>Number(b.alignment>=.15)-Number(a.alignment>=.15)
+   || (b.alignment-a.alignment)*18+a.distance-b.distance)[0]?.p;
 }
 function powerUnavailable(sim,player,power){
  if(!sim.cooldownsOff&&player.powerReadyAt>Time.time&&!(power===CLASSIC_POWERS.cole&&player.shadowAgainUntil>Time.time))return `${power.name} recharging`;
@@ -454,14 +455,15 @@ function spinKick(sim,player,cmd){
  SoundDB.play(canKick?'lob':'slide');
  return {text:SPIN_KICK.name,handled:true};
 }
-function arcShotFlight(sim,player,cmd){
- const ball=sim.ball,dir=humanFacingDir(player,cmd);
+function arcShotFlight(sim,player,dir,side=dir.y>0?-1:1,ticks=0){
+ const ball=sim.ball;
  const {maxX,maxY}=ball;
  const xRange=dir.x>0?(maxX-ball.x)/dir.x:dir.x<0?-ball.x/dir.x:Infinity;
  const yRange=dir.y>0?(maxY-ball.y)/dir.y:dir.y<0?-ball.y/dir.y:Infinity;
  const range=Math.min(20,xRange,yRange);
- const curveForce=dir.y>0?-8:8;
- const angle=Math.atan2(dir.y,dir.x)-Math.sign(curveForce)*Math.min(.3,Math.max(0,range)*.016);
+ const charge=Math.min(1,ticks/ARC_BEND_TICKS);
+ const curveForce=side*(8+charge*(player.powerLevel===2?8:5));
+ const angle=Math.atan2(dir.y,dir.x)-Math.sign(curveForce)*Math.min(.5,Math.max(0,range)*.016*Math.abs(curveForce)/8);
  const {SHOOT_SPEED_BASE=11,SHOOT_SPEED_STAT_SCALE=6}=Settings.physics;
  const speed=SHOOT_SPEED_BASE+(player.effectiveShooting||65)*SHOOT_SPEED_STAT_SCALE/100;
  const kick={vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,vz:1.5,curveForce};
@@ -480,7 +482,7 @@ function shootArc(sim,player,flight){
  sim.arcAssist=null;
  if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
  SoundDB.play('shot');
- return {text:'Arc Shot',handled:true};
+ return {text:'Swerve Shot',handled:true};
 }
 function tickArcPass(sim,player,cmd,upgrades){
  let cast=sim.arcCast;
@@ -489,22 +491,32 @@ function tickArcPass(sim,player,cmd,upgrades){
  }
  if(player.characterId!=='mendes')return null;
  if(cmd.usePower){
-  if(cast){sim.arcCast=null;return {text:'Arc Pass cancelled',handled:!!cast.target};}
+  if(cast){sim.arcCast=null;return {text:'Swerve cancelled',handled:!!(cast.target||cast.shot)};}
   const unavailable=powerUnavailable(sim,player,CLASSIC_POWERS.mendes);
   if(unavailable)return {text:unavailable,handled:false};
-  if(sim.ball.owner!==player)return {text:'Arc Pass needs possession',handled:false};
+  if(sim.ball.owner!==player)return {text:'Swerve needs possession',handled:false};
   cast=sim.arcCast={player,ticks:0};
   clearManualCharge(sim);
  }
  if(!cast)return null;
- if(cmd.shoot||cmd.lob){
-  sim.arcCast=null;
-  if(cmd.shoot&&player.powerLevel===2)return shootArc(sim,player,arcShotFlight(sim,player,cmd));
-  return null;
+ if(cmd.lob){sim.arcCast=null;return null;}
+ if(!cast.target&&(cmd.shoot||cast.shot)){
+  const aim=humanFacingDir(player,cmd);
+  const shot=cast.shot??={aim,side:aim.y>0?-1:1,ticks:0};
+  if(cmd.shootReleased){
+   sim.arcCast=null;
+   return shootArc(sim,player,shot.flight??arcShotFlight(sim,player,shot.aim,shot.side));
+  }
+  if(!cmd.shootDown){sim.arcCast=null;return {handled:true};}
+  const steer=shot.aim.x*aim.y-shot.aim.y*aim.x;
+  if(Math.abs(steer)>.2)shot.side=-Math.sign(steer);
+  cast.ticks=++shot.ticks;
+  cast.flight=shot.flight=arcShotFlight(sim,player,shot.aim,shot.side,shot.ticks);
+  return {handled:true};
  }
  if(player.powerLevel===2&&!cast.target&&!cmd.pass){
-  cast.flight=arcShotFlight(sim,player,cmd);
-  return cmd.usePower?{text:'Arc Pass armed',handled:false}:null;
+  cast.flight=arcShotFlight(sim,player,humanFacingDir(player,cmd));
+  return cmd.usePower?{text:'Swerve armed',handled:false}:null;
  }
  const shownFlight=cast.target&&cmd.passReleased?cast.flight:null;
  const teammate=cast.target||pickArcTarget(sim,player,cmd);
@@ -514,7 +526,7 @@ function tickArcPass(sim,player,cmd,upgrades){
  if(!target){
   cast.flight=null;
   return cmd.pass?{text:'Aim at a teammate in passing range',handled:true}
-   :cmd.usePower?{text:'Arc Pass armed',handled:false}:null;
+   :cmd.usePower?{text:'Swerve armed',handled:false}:null;
  }
  if(cmd.pass)cast.target=target;
  if(cast.target&&!cmd.passDown&&!cmd.passReleased){sim.arcCast=null;return {handled:true};}
@@ -525,26 +537,20 @@ function tickArcPass(sim,player,cmd,upgrades){
  const destination=solo?{
   x:Math.max(.4,Math.min(field.width-.4,from.x+dir.x*5)),
   y:Math.max(.4,Math.min(field.height-.4,from.y+dir.y*5))
- }:sim.practice?target:{
-  x:Math.max(.4,Math.min(field.width-.4,target.x+(target.vx||0)*.3)),
-  y:Math.max(.4,Math.min(field.height-.4,target.y+(target.vy||0)*.3))
- };
+ }:target;
  const dx=destination.x-from.x,dy=destination.y-from.y,distance=Math.hypot(dx,dy);
  if(target.isSentOff||distance<2){
   sim.arcCast=null;return {text:'Aim at a teammate in passing range',handled:!!cast.target};
  }
  const cross=(dx*dir.y-dy*dir.x)/distance;
- if(cast.target&&Math.abs(cross)>.2)cast.side=Math.sign(cross);
+ if(cast.target&&Math.abs(cross)>.12)cast.side=-Math.sign(cross);
  const maxCurve=upgrades.has('swerve')?18:15;
  const curve=9+(maxCurve-9)*Math.min(1,cast.ticks/ARC_BEND_TICKS);
  const opponents=sim.teamB.players.filter(p=>!p.isSentOff);
- cast.flight=shownFlight;
- for(const strength of [1,.7,.45]){
-  if(cast.flight)break;
-  cast.flight=arcFlight(from,destination,opponents,curve*strength,cast.side);
- }
- cast.flight??=cast.side?arcFlight(from,destination,opponents,curve):null;
- if(!cast.target)return cmd.usePower?{text:'Arc Pass armed',handled:false}:null;
+ cast.flight=shownFlight||arcFlight(from,destination,opponents,curve,cast.side)
+  ||arcFlight(from,destination,opponents,curve*.7,cast.side)
+  ||arcFlight(from,destination,opponents,curve*.45,cast.side);
+ if(!cast.target)return cmd.usePower?{text:'Swerve armed',handled:false}:null;
  if(!cmd.passReleased)return {handled:true};
  sim.arcCast=null;
  if(!cast.flight)return {text:'No room for that bend',handled:true};
@@ -555,7 +561,7 @@ function tickArcPass(sim,player,cmd,upgrades){
   receiveAt:Time.time+cast.flight.duration+(solo?.55:0),landing:cast.flight.preview.at(-1),trail:[from]};
  if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
  SoundDB.play('lob');
- return {text:'Arc Pass',handled:true};
+ return {text:'Swerve Pass',handled:true};
 }
 function usePower(sim,player,cmd,upgrades){
  const power=CLASSIC_POWERS[player.characterId];

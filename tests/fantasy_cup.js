@@ -125,7 +125,7 @@ function runBarge(sim){
  const loadout=await FiveMatch.create('mendes',21,{squad:true,headless:true,
   roster:[mageStarter,arcHire,warriorHire],opponent:GOBLIN_TEAM});
  const [starterMage,arcMage,spinOrc]=loadout.sim.teamA.players;
- assert.deepEqual([starterMage,arcMage,spinOrc].map(p=>loadout.powerFor(p).name),['Portal Pass','Arc Pass','Orc Spin']);
+ assert.deepEqual([starterMage,arcMage,spinOrc].map(p=>loadout.powerFor(p).name),['Portal Pass','Swerve','Orc Spin']);
  Settings.HEADLESS=false;loadout.sim.fsm.setCurrentState(MatchStates.Play);
  loadout.sim.matchState='play';loadout.sim.setPieceType='';
  loadout.input.aim={x:1,y:-2};
@@ -134,7 +134,7 @@ function runBarge(sim){
  assert.ok(loadout.sim.teleCast?.exit,'the starting loadout arms the selected portal power');
  giveBall(loadout.sim,arcMage,15,17);
  press(loadout,'Space');
- assert.equal(loadout.sim.arcCast?.player,arcMage,'Space arms the recruited mage’s Arc Pass');
+ assert.equal(loadout.sim.arcCast?.player,arcMage,'Space arms the recruited mage’s Swerve');
  const traineeRun=new FantasyRun(8,'mendes','tele');
  traineeRun.finish(1,0);
  assert.equal(traineeRun.trainable.length,1);
@@ -494,7 +494,7 @@ function runBarge(sim){
  press(game,'Space');assert.equal(wizard.powerReadyAt,0,'casting away from the ball leaves the power ready');
  giveBall(sim,wizard,15,17);game.input.aim={x:1,y:0};
  press(game,'Space');
- assert.ok(sim.ball.owner===wizard,'Space arms Arc Pass without kicking');
+ assert.ok(sim.ball.owner===wizard,'Space arms Swerve without kicking');
  assert.ok(sim.arcCast.flight.preview.length>2,'arming shows the curved route immediately');
  game.input.press('MouseLeft');tickManualControl(sim);
  const initialCurve=Math.abs(sim.arcCast.flight.curveForce);
@@ -506,7 +506,7 @@ function runBarge(sim){
   const sample=samplePassRoute(previewedRoute,t*previewedRoute.duration);
   return Math.hypot(sample.vx,sample.vy);
  };
- assert.ok(Math.abs(pace(.1)-pace(.3))<1e-8,'Arc Pass maintains the same speed through the bend');
+ assert.ok(Math.abs(pace(.1)-pace(.3))<1e-8,'Swerve maintains the same speed through the bend');
  game.input.release('MouseLeft');tickManualControl(sim);
  assert.ok(sim.ball.passRoute===previewedRoute,'release uses the route last shown by the arrow');
  assert.equal(sim.ball.owner,null);assert.equal(wizard.powerReadyAt,Time.time+10);
@@ -550,7 +550,7 @@ function runBarge(sim){
  const straight=await passThroughScreen(false);
  assert.ok(straight.owner===straight.defender,'the screen intercepts the normal pass');
  const arced=await passThroughScreen(true);
- assert.ok(arced.owner===arced.receiver,'Arc Pass beats the same defender and reaches its receiver');
+ assert.ok(arced.owner===arced.receiver,'Swerve beats the same defender and reaches its receiver');
 
  const practice=await FiveMatch.create('cole',42,{squad:true,practice:true,headless:true,cooldownsOff:true});
  practice.headless=false;
@@ -610,12 +610,12 @@ function runBarge(sim){
   }
  }
  assert.ok(returnKick,'the practice buddy physically kicks the ball back');
- assert.ok(practice.player===practiceRune,"Rune stays controlled after Arc Pass");
- assert.ok(practice.sim.ball.owner===practiceRune,"Rune gets the ball back after Arc Pass");
+ assert.ok(practice.player===practiceRune,"Rune stays controlled after Swerve");
+ assert.ok(practice.sim.ball.owner===practiceRune,"Rune gets the ball back after Swerve");
  assert.match(practice.feedback.text,/ready/);
  const position=runner.x;
  castInPractice();
- assert.ok(Math.abs(practice.sim.ball.curveForce)>1,'Arc Pass can cast again without resetting the pitch');
+ assert.ok(Math.abs(practice.sim.ball.curveForce)>1,'Swerve can cast again without resetting the pitch');
  assert.equal(practice.sim.teamA.players.filter(p=>!p.isSentOff).length,2);
  for(const level of [1,2]){
   practice.resetPractice('mendes',level);
@@ -623,25 +623,26 @@ function runBarge(sim){
   practice.input.aim={x:1,y:0};
   const arcShotBall=practice.sim.ball;
   practice.input.press('Space');practice.step();practice.input.release('Space');
-  const preview=practice.sim.arcCast.flight;
-  if(level===2){
-   assert.ok(preview.shot&&preview.preview.length>10);
-   const [origin,first,...rest]=preview.preview;
-   const mid=rest[8];
-   assert.ok(Math.abs((first.x-origin.x)*(mid.y-origin.y)-(first.y-origin.y)*(mid.x-origin.x))>.1);
-  }
-  practice.input.press('MouseRight');practice.step();practice.input.release('MouseRight');
-  assert.equal(arcShotBall.isShot,level===2);
-  if(level===2){
-   assert.equal(practice.feedback.text,'Arc Shot');
-   assert.ok(Math.abs(arcShotBall.curveForce)>6);
-   assert.ok(Math.abs(arcShotBall.x-preview.preview[1].x)<1e-8);
-   assert.ok(Math.abs(arcShotBall.y-preview.preview[1].y)<1e-8);
-   practice.step(8);
-   assert.ok(Math.abs(arcShotBall.x-preview.preview[9].x)<1e-8);
-   assert.ok(Math.abs(arcShotBall.y-preview.preview[9].y)<1e-8);
-   assert.ok(Math.hypot(arcShotBall.vx,arcShotBall.vy)<=Settings.physics.SHOOT_SPEED_BASE+Settings.physics.SHOOT_SPEED_STAT_SCALE+.02);
-  }
+  practice.input.press('MouseRight');practice.step();
+  assert.equal(arcShotBall.owner,practice.player,'holding Shoot keeps possession');
+  const shot=practice.sim.arcCast.shot;
+  const initialCurve=shot.flight.kick.curveForce;
+  practice.input.aim={x:0,y:1};
+  practice.step(8);
+  assert.deepEqual(shot.aim,{x:1,y:0},'steering shapes the bend without moving the locked shot aim');
+  const preview=shot.flight;
+  assert.ok(Math.abs(preview.kick.curveForce)>Math.abs(initialCurve));
+  assert.ok(Math.abs(preview.kick.vx)>Math.abs(preview.kick.vy),'the shot still travels toward the original aim');
+  practice.input.aim={x:-1,y:0};
+  practice.input.release('MouseRight');practice.step();
+  assert.equal(arcShotBall.isShot,true);
+  assert.equal(practice.feedback.text,'Swerve Shot');
+  assert.ok(Math.abs(arcShotBall.x-preview.preview[1].x)<1e-8);
+  assert.ok(Math.abs(arcShotBall.y-preview.preview[1].y)<1e-8);
+  practice.step(8);
+  assert.ok(Math.abs(arcShotBall.x-preview.preview[9].x)<1e-8);
+  assert.ok(Math.abs(arcShotBall.y-preview.preview[9].y)<1e-8);
+  assert.ok(Math.hypot(arcShotBall.vx,arcShotBall.vy)<=Settings.physics.SHOOT_SPEED_BASE+Settings.physics.SHOOT_SPEED_STAT_SCALE+.02);
  }
  practice.resetPractice('tele-pass');
  practicePossession();

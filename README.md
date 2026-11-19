@@ -212,9 +212,10 @@ pitch. Touch controls include a movement stick and buttons for all match actions
   reach. A miss leaves Grum recovering briefly.
 - **Nyx, Rogue winger.** Shadow Step dashes in the movement direction, or
   sideways when standing still.
-- **Rune, Wizard playmaker.** Press **Space** to arm Arc Pass, aim at a teammate,
+- **Rune, Wizard playmaker.** Press **Space** to arm Swerve, aim at a teammate,
   then click to send the pass or hold and steer to shape the bend. In a solo
-  match, Rune can bend the ball into space for his own run.
+  match, Rune can bend the ball into space for his own run. Hold Shoot to
+  lock the shot aim, steer the bend, and release to fire.
 - **Asha, Knight striker.** A high shooting stat and regular charged shots.
 
 Each power recharges automatically. The icon beside the active player shows
