@@ -398,6 +398,11 @@ function paint(){
    g.lineTo(tip.x-11*dpr*Math.cos(angle+.5),tip.y-11*dpr*Math.sin(angle+.5));
    g.stroke();
    g.lineWidth=1.5*dpr;g.beginPath();g.ellipse(tip.x,tip.y,9*dpr,5*dpr,0,0,Math.PI*2);g.stroke();
+   const receiver=active.arcCast.previewTarget;
+   if(receiver&&!active.arcCast.flight.shot){
+    const marker=Utils.toScreen(receiver.x,receiver.y);
+    g.beginPath();g.ellipse(marker.x,marker.y,13*dpr,7*dpr,0,0,Math.PI*2);g.stroke();
+   }
   }
   const p=match.player,point=Utils.toScreen(p.x,p.y),scale=Settings.camera.scale;
   if(!p.isSentOff){

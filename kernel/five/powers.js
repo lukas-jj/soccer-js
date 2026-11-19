@@ -197,7 +197,7 @@ function arcFlight(from,target,opponents,curve,side){
   return along>1&&along<distance-1&&Math.abs(x*normal.x+y*normal.y)<1.4;
  });
  const flights=[];
- for(const sign of side?[-side]:[-1,1]){
+ for(const sign of side?[side]:[-1,1]){
   const bend=Math.min(distance*.37,curve*.34)*sign;
   const lengths=[0];
   let previous=0;
@@ -231,9 +231,8 @@ function pickArcTarget(sim,player,cmd){
   .map(p=>{
    const dx=p.x-from.x,dy=p.y-from.y,distance=Math.hypot(dx,dy);
    return {p,distance,alignment:(dx*dir.x+dy*dir.y)/(distance||1)};
-  }).filter(p=>p.distance>=3&&p.distance<=22)
-  .sort((a,b)=>Number(b.alignment>=.15)-Number(a.alignment>=.15)
-   || (b.alignment-a.alignment)*18+a.distance-b.distance)[0]?.p;
+  }).filter(p=>p.distance>=2&&p.distance<=25&&p.alignment>=.35)
+  .sort((a,b)=>(b.alignment-a.alignment)*40+a.distance-b.distance)[0]?.p;
 }
 function powerUnavailable(sim,player,power){
  if(!sim.cooldownsOff&&player.powerReadyAt>Time.time&&!(power===CLASSIC_POWERS.cole&&player.shadowAgainUntil>Time.time))return `${power.name} recharging`;
@@ -511,6 +510,7 @@ function tickArcPass(sim,player,cmd,upgrades){
  const teammate=cast.target||pickArcTarget(sim,player,cmd);
  const solo=(!teammate||teammate===player)&&sim.teamA.getOutfieldPlayers().length===1;
  const target=teammate||(solo?player:null);
+ cast.previewTarget=target===player?null:target;
  if(!target){
   cast.flight=null;
   return cmd.pass?{text:'Aim at a teammate in passing range',handled:true}
@@ -525,19 +525,25 @@ function tickArcPass(sim,player,cmd,upgrades){
  const destination=solo?{
   x:Math.max(.4,Math.min(field.width-.4,from.x+dir.x*5)),
   y:Math.max(.4,Math.min(field.height-.4,from.y+dir.y*5))
- }:target;
+ }:sim.practice?target:{
+  x:Math.max(.4,Math.min(field.width-.4,target.x+(target.vx||0)*.3)),
+  y:Math.max(.4,Math.min(field.height-.4,target.y+(target.vy||0)*.3))
+ };
  const dx=destination.x-from.x,dy=destination.y-from.y,distance=Math.hypot(dx,dy);
  if(target.isSentOff||distance<2){
   sim.arcCast=null;return {text:'Aim at a teammate in passing range',handled:!!cast.target};
  }
  const cross=(dx*dir.y-dy*dir.x)/distance;
- if(cast.target&&Math.abs(cross)>.12)cast.side=-Math.sign(cross);
+ if(cast.target&&Math.abs(cross)>.2)cast.side=Math.sign(cross);
  const maxCurve=upgrades.has('swerve')?18:15;
  const curve=9+(maxCurve-9)*Math.min(1,cast.ticks/ARC_BEND_TICKS);
  const opponents=sim.teamB.players.filter(p=>!p.isSentOff);
- cast.flight=shownFlight||arcFlight(from,destination,opponents,curve,cast.side)
-  ||arcFlight(from,destination,opponents,curve*.7,cast.side)
-  ||arcFlight(from,destination,opponents,curve*.45,cast.side);
+ cast.flight=shownFlight;
+ for(const strength of [1,.7,.45]){
+  if(cast.flight)break;
+  cast.flight=arcFlight(from,destination,opponents,curve*strength,cast.side);
+ }
+ cast.flight??=cast.side?arcFlight(from,destination,opponents,curve):null;
  if(!cast.target)return cmd.usePower?{text:'Arc Pass armed',handled:false}:null;
  if(!cmd.passReleased)return {handled:true};
  sim.arcCast=null;
