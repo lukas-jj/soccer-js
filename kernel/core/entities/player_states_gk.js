@@ -1,3 +1,5 @@
+const { applyHumanMovement } = require('../lib/manual_control.js');
+const { canClaimAfterKick } = require('../lib/logic_regulator.js');
 const { futurePosition } = require('../lib/ball_prediction.js');
 
 /**
@@ -139,6 +141,13 @@ function registerGkStates(PlayerStates, d) {
         return futurePosition(ball, gkPredictHorizon(p, ball));
     }
 
+    function isOwnOutgoingBall(p, ball) {
+        if (ball.lastKicker !== p) return false;
+        if (!canClaimAfterKick(p)) return true;
+        const away = (ball.x - p.x) * ball.vx + (ball.y - p.y) * ball.vy;
+        return away > 0 && ballGroundSpeed(ball) > 1;
+    }
+
     /**
      * Attempt a catch/save. Returns true if possession granted.
      * @param {object} p
@@ -146,7 +155,7 @@ function registerGkStates(PlayerStates, d) {
      * @param {{ dive?: boolean }} [opts]
      */
     function tryGkCatch(p, ball, opts = {}) {
-        if (!ball || ball.owner === p) return false;
+        if (!ball || (ball.owner && ball.owner.team === p.team) || isOwnOutgoingBall(p, ball)) return false;
         if (ball.owner && ball.owner.team !== p.team) {
             // Contested at feet — only claim if opponent is not stacked on the ball
             if (dist2d(p.x, p.y, ball.owner.x, ball.owner.y) < 1.2) return false;
@@ -200,7 +209,8 @@ function registerGkStates(PlayerStates, d) {
         }
 
         chance = Math.max(0.06, Math.min(0.78, chance));
-        if (Math.random() >= chance) return false;
+        const backPass = ball.lastKicker?.team === p.team && !ball.isShot;
+        if (!backPass && Math.random() >= chance) return false;
 
         grantGkPossession(p, ball);
         SoundDB.play(ball.isShot ? 'save' : 'catch');
@@ -210,7 +220,8 @@ function registerGkStates(PlayerStates, d) {
 
     /** Whether GK should commit to GkDive this tick. */
     function shouldGkDive(p, ball, approachDist, predZ) {
-        if (!ball || ball.owner !== null) return false;
+        if (!ball || ball.owner !== null || (ball.kickSequence != null && p.gkLastDiveKick === ball.kickSequence) || isOwnOutgoingBall(p, ball)
+            || (ball.lastKicker?.team === p.team && !ball.isShot)) return false;
         if (predZ > 2.6) return false;
         const catchR = gkEffectiveCatchRange(p, ball);
         // Already smotherable at feet — do not dive
@@ -253,6 +264,12 @@ function registerGkStates(PlayerStates, d) {
 
                 const ball = p.level.ball;
                 if (!ball) return;
+
+                if (p.humanControlled && p.level.manualKeeper) {
+                    applyHumanMovement(p);
+                    if (!ball.owner) tryGkCatch(p, ball, { dive: false });
+                    return;
+                }
 
                 const gkBaseX = getGoalkeeperBaseX(p.level, p.team);
                 const fieldBounds = Utils.getFieldBounds();
@@ -331,7 +348,8 @@ function registerGkStates(PlayerStates, d) {
                     return;
                 }
 
-                if (isBallNearGoal || shotThreat) {
+                const teammateHasBall = ball.owner && ball.owner.team === p.team;
+                if (!teammateHasBall && !isOwnOutgoingBall(p, ball) && (isBallNearGoal || shotThreat)) {
                     const pred = gkPredictBall(p, ball);
                     const approachDist = dist2d(p.x, p.y, pred.x, pred.y);
                     const interceptR = aiNum(p, 'GK_INTERCEPT_RANGE', 6.5);
@@ -388,6 +406,7 @@ function registerGkStates(PlayerStates, d) {
                 p.z = 0;
                 const ball = p.level.ball;
                 if (ball) {
+                    p.gkLastDiveKick = ball.kickSequence;
                     const pred = gkPredictBall(p, ball);
                     // Clamp dive target to stay near goal mouth (do not chase midfield)
                     const field = Utils.getFieldBounds();
@@ -419,6 +438,12 @@ function registerGkStates(PlayerStates, d) {
                 const ball = p.level.ball;
                 if (!ball) {
                     p.fsm.changeState(PlayerStates.Idle);
+                    return;
+                }
+
+                if (ball.owner || isOwnOutgoingBall(p, ball)
+                    || (ball.lastKicker?.team === p.team && !ball.isShot)) {
+                    p.fsm.changeState(PlayerStates.Goalkeeper);
                     return;
                 }
 

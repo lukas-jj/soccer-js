@@ -160,3 +160,69 @@ If you find this project useful and would like to support its development, you c
 
 * **Bitcoin (BTC)**:  
   `bc1qqk5s3rmvxe3mlhtzr07xnp44ap6yu95ksva703`
+
+## Spellside Cup
+
+Run the game locally and open **http://localhost:8080/**.
+
+```bash
+npm install
+npm run build
+npm run dev
+```
+
+Choose a starting player and select **New Run**. You open with one outfielder
+and no goalkeeper. The opener is against four Goblin Slimers and a Slime Keeper. The outfielders’ slow
+projectiles halve your movement speed for two seconds on contact. Later
+encounters draw different opponents and may include a keeper.
+
+Win four matches to finish a run. The Slimers play golden goal, the Orc Brothers
+play first to two, and later encounters play first to three. Wins earn gold and
+losses cost gold before a rematch. After each non-final match, choose to enter the tavern, train, rest, or continue.
+Entering the tavern reveals three recruits and commits that visit. Practice a
+recruit's ability before buying or continue without a purchase. Rest doubles
+sprint stamina for the next match. Boards around the pitch bounce misses back into play.
+
+**Test Match** sets your side and the opponents independently from one to five.
+Custom sides can include a keeper when they have at least two players. Test Match
+also offers the Goblin Slimers and Orc Brothers presets. **Abilities**
+opens the individual practice drills.
+
+Control follows the receiver on an aimed pass and the ball carrier in
+possession. In test matches with a keeper, **G** switches to them on defense.
+Left click passes, right click clears, and **L** dives off the ball.
+
+| Control | Action |
+| --- | --- |
+| WASD / arrows | Move |
+| Mouse | Aim independently of movement |
+| J / left mouse | Pass or tackle |
+| K / right mouse | Shoot or shoulder tackle |
+| L | Lob |
+| Shift | Sprint |
+| Tab | Switch defenders |
+| G | Switch to or from the goalkeeper while defending |
+| Space | Use the active player's special power |
+| Escape | Pause or resume |
+
+Hold and release to charge a kick. Movement aims when the pointer is off the
+pitch. Touch controls include a movement stick and buttons for all match actions.
+
+- **Grum, Orc defender.** Orc Barge takes the ball from an opponent in
+  reach. A miss leaves Grum recovering briefly.
+- **Nyx, Rogue winger.** Shadow Step dashes in the movement direction, or
+  sideways when standing still.
+- **Rune, Wizard playmaker.** Press **Space** to arm Swerve, aim at a teammate,
+  then click to send the pass or hold and steer to shape the bend. In a solo
+  match, Rune can bend the ball into space for his own run. Hold Shoot to
+  lock the shot aim, steer the bend, and release to fire.
+- **Asha, Knight striker.** A high shooting stat and regular charged shots.
+
+Each power recharges automatically. The icon beside the active player shows
+**Space** when ready and counts down in seconds after use. Upgrades can shorten
+cooldowns, change a power's behavior, or refresh it through play. On your goal
+kicks, aim and release **J** for a short pass or **K** / **L** for a clearance.
+
+`npm run test:five` checks the match, powers, run progression, and interface.
+The browser entry is `html/soccer-rogue.html`, with game code under
+`kernel/five/` and the interface in `kernel/apps/soccer-rogue/app.js`.

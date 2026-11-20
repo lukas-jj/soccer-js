@@ -279,9 +279,12 @@ class Pitch extends GameObject {
         const goalY1 = this.leftGoal.yMin;
         const goalY2 = this.leftGoal.yMax;
 
+        const rightOffset = this.rightGoal.center.y - this.leftGoal.center.y;
+        const project = (x, y, z) => Utils.toScreen(x, x >= fw ? y + rightOffset : y, z);
+
         const drawLine = (p1, p2, color = '#FFFFFF', width = 2) => {
-            const s1 = Utils.toScreen(p1.x, p1.y, p1.z || 0);
-            const s2 = Utils.toScreen(p2.x, p2.y, p2.z || 0);
+            const s1 = project(p1.x, p1.y, p1.z || 0);
+            const s2 = project(p2.x, p2.y, p2.z || 0);
             g.strokeStyle = color;
             g.lineWidth = width;
             g.beginPath();
@@ -373,7 +376,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const ly = goalY1 + t * (goalY2 - goalY1);
                 const pt = getLeftBackNetPos(ly, hz);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -383,7 +386,7 @@ class Pitch extends GameObject {
             g.beginPath();
             for (let hz = 0; hz <= goalHeight; hz += Utils.scaleFieldY(0.9)) {
                 const pt = getLeftBackNetPos(ly, hz);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (hz === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -395,7 +398,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const ly = goalY1 + t * (goalY2 - goalY1);
                 const pt = getLeftTopNetPos(lx, ly);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -407,7 +410,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const lx = -t * goalDepth;
                 const pt = getLeftTopNetPos(lx, ly);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -420,7 +423,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const ly = goalY1 + t * (goalY2 - goalY1);
                 const pt = getRightBackNetPos(ly, hz);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -430,7 +433,7 @@ class Pitch extends GameObject {
             g.beginPath();
             for (let hz = 0; hz <= goalHeight; hz += Utils.scaleFieldY(0.9)) {
                 const pt = getRightBackNetPos(ly, hz);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (hz === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -442,7 +445,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const ly = goalY1 + t * (goalY2 - goalY1);
                 const pt = getRightTopNetPos(lx, ly);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -454,7 +457,7 @@ class Pitch extends GameObject {
                 const t = i / steps;
                 const lx = fw + t * goalDepth;
                 const pt = getRightTopNetPos(lx, ly);
-                const scr = Utils.toScreen(pt.x, pt.y, pt.z);
+                const scr = project(pt.x, pt.y, pt.z);
                 if (i === 0) g.moveTo(scr.x, scr.y);
                 else g.lineTo(scr.x, scr.y);
             }
@@ -940,7 +943,9 @@ class Pitch extends GameObject {
         drawCornerArc(fw, fh, Math.PI, 3 * Math.PI / 2);        // Bottom-Right
 
         // Rest-state goals (posts + nets) — live mesh only when net spring is active
-        this._paintGoals(cg, fw, s, 0, 0, { frames: true, sideNets: true, meshNets: true });
+        if (!this.drawLiveGoals) {
+            this._paintGoals(cg, fw, s, 0, 0, { frames: true, sideNets: true, meshNets: true });
+        }
 
         cg.restore();
 
@@ -1114,7 +1119,7 @@ class Pitch extends GameObject {
         const eps = Settings.GOAL_NET_AT_REST_EPS != null ? Settings.GOAL_NET_AT_REST_EPS : 0.0005;
         const netsMoving =
             Math.abs(this.leftNetExp) > eps || Math.abs(this.rightNetExp) > eps;
-        if (!isRealContext) {
+        if (!isRealContext || this.drawLiveGoals) {
             this._paintGoals(g, fw, s, this.leftNetExp, this.rightNetExp, {
                 frames: true,
                 sideNets: true,

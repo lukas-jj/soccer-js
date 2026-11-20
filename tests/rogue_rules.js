@@ -1,0 +1,42 @@
+const assert=require('node:assert/strict');
+const C=require('../kernel/rogue/career.js'),P=require('../kernel/rogue/players.js');
+const {CONFIG,FORMATIONS}=require('../kernel/rogue/data.js');
+const fresh=()=>C.newRun('harbor',19);
+let s=fresh(),p=s.squad[1];
+P.awardMinutes(s,p,'LB',30);P.awardMinutes(s,p,'LS',60);
+assert.equal(p.minutes.DF,30);assert.equal(p.minutes.FW,60);
+const normal=P.effectiveStats(s,p,'LB','fine');p.minutes.DF=4000;
+assert.ok(P.effectiveStats(s,p,'LB','fine').tackling>normal.tackling,'position proficiency effective');
+p.fatigue=90;assert.ok(P.effectiveStats(s,p,'LB','fine').speed<normal.speed,'fatigue reduces effectiveness');
+p.fatigue=0;p.xp=0;p.level=1;p.pending=[];
+P.awardMinutes(s,p,'MF',1000);assert.ok(p.pending.length>=4);
+const pending=p.pending.length,choice=p.pending[0][1],before=p.stats[choice.stat];P.chooseUpgrade(p,1);
+assert.equal(p.pending.length,pending-1);assert.equal(p.stats[choice.stat],Math.min(100,before+choice.gain));
+let goalkeeperChoices=0,otherChoices=0;
+s=fresh();p=s.squad[0];
+for(let i=0;i<150;i++){const cs=P.createPlayer(s,'Shot Stopper');cs.xp=99;P.awardMinutes(s,cs,'GK',1);for(const c of cs.pending[0]){if(c.stat==='goalkeeping')goalkeeperChoices++;else otherChoices++;}}
+assert.ok(goalkeeperChoices>100,'goalkeeper weighting appears frequently');
+s=fresh();assert.throws(()=>C.hire(s,'split'));const day=s.prepLeft;C.hire(s,'technique');C.hire(s,'defence');assert.equal(s.prepLeft,day);s.money+=1000;C.hire(s,'split');
+const xp=s.squad[0].xp,shoot=s.squad[0].stats.shooting,pass=s.squad[1].stats.passing;
+C.activity(s,'train',{type:'passing',split:'shooting',group:[s.squad[0].id]});
+assert.ok(s.squad[0].stats.shooting>shoot);assert.ok(s.squad[1].stats.passing>pass);assert.equal(s.squad[0].xp,xp);
+s=fresh();p=s.squad[0];p.injury={days:4,name:'Sprain'};C.hire(s,'medic');C.activity(s,'rest');assert.equal(p.injury.days,2);
+C.activity(s,'shop');assert.equal(p.injury,null);
+p.curses=['party','nerves'];C.buy(s,'relief');C.useItem(s,'relief',p.id);assert.equal(P.activeCurse(s,p,'party'),false);
+C.buy(s,'cleanse');C.useItem(s,'cleanse',p.id,'party');assert.deepEqual(p.curses,['nerves']);
+s=fresh();C.activity(s,'scout');assert.equal(s.offers.length,3);const offer=s.offers[0];const fee=offer.price;const cash=s.money;
+C.sign(s,offer.player.id);assert.equal(s.money,cash-fee);assert.ok(s.squad.some(p=>p.id===offer.player.id));assert.throws(()=>C.sign(s,offer.player.id));
+C.sell(s,offer.player.id);assert.ok(!s.squad.some(p=>p.id===offer.player.id));
+C.activity(s,'rest');assert.throws(()=>C.sign(s,s.offers[0].player.id),'recruiting visit closes on next day');
+s=fresh();s.squad[0].injury={days:8,name:'Strain'};for(let i=0;i<3;i++)C.activity(s,'rest');assert.throws(()=>C.beginMatch(s));
+C.assign(s,0,s.squad[11].id);C.beginMatch(s);assert.throws(()=>C.activity(s,'rest'));assert.throws(()=>C.buy(s,'spray'));
+// Match checkpoint, post-match results, pending choices, and endings all serialize.
+for(const phase of ['prep','match','results','season','victory','gameover']){s.phase=phase;assert.deepEqual(C.decodeSave(C.encodeSave(s)),s);}
+s=fresh();s.money=0;for(let i=0;i<3;i++)C.activity(s,'rest');C.beginMatch(s);
+C.applyMatchReport(s,{minute:90,scoreA:0,scoreB:1,minutes:{},weather:'fine',substitutions:0});assert.equal(s.phase,'gameover','losing fixture can bankrupt spent-out club');
+s=fresh();s.division=1;s.table=[{id:'r',points:10,gf:3,ga:0},{id:s.clubId,points:0,gf:0,ga:3}];C.endSeason(s);assert.equal(s.division,0);assert.equal(s.phase,'season');
+C.choosePerk(s,s.perkChoices[0]);C.continueSeason(s);assert.equal(s.season,2);assert.equal(s.phase,'prep');assert.equal(s.perks.length,2);
+s=fresh();s.division=2;s.table=[{id:s.clubId,points:9,gf:9,ga:0},{id:'r',points:0,gf:0,ga:9}];C.endSeason(s);assert.equal(s.phase,'victory');C.continueSeason(s);assert.equal(s.phase,'season');C.choosePerk(s,s.perkChoices[0]);C.continueSeason(s);assert.equal(s.division,2);assert.equal(s.won,true);
+for(const formation of Object.values(FORMATIONS))for(const slot of formation)assert.ok(['GK','DF','MF','FW'].includes(P.roleGroup(slot.role)));
+const rounds=C.schedule(['a','b','c','d']);assert.equal(new Set(rounds.flat().map(p=>p.slice().sort().join())).size,6);
+console.info('Soccer Rogue extended rules passed');

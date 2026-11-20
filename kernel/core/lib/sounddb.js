@@ -33,6 +33,7 @@ const SFX_GAIN = {
     whistle_end: 0.26,
     kick: 0.28,
     pass: 0.22,
+    call_pass: 0.18,
     shot: 0.34,
     lob: 0.26,
     header: 0.24,
@@ -499,6 +500,11 @@ const SoundDB = {
             case 'pass':
                 this._osc('triangle', 160 * r, t0, 0.055, g * 0.9, 40 * r);
                 this._playNoise(t0, 0.035, g * 0.3, 1200, 'lowpass', 300);
+                break;
+
+            case 'call_pass':
+                this._osc('triangle', 520 * r, t0, 0.085, g, 610 * r);
+                this._osc('triangle', 740 * r, t0 + 0.09, 0.11, g, 660 * r);
                 break;
 
             case 'shot':

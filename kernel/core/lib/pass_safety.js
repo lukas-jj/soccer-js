@@ -67,7 +67,7 @@ function estimatePlayerMaxSpeed(player) {
 
     // speed 60 ≈ 6.6 m/s; speed 100 ≈ 8.0 m/s (sprint mul applied only in manual control)
     const speedBonus = (baseStats / 100.0) * bonusMax * stam;
-    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1);
+    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1) * (player.movementScale ?? 1) * (player.movementEffectScale ?? 1);
 }
 
 /**

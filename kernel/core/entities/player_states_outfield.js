@@ -623,7 +623,7 @@ function registerOutfieldStates(PlayerStates, d) {
             },
             execute(p) {
                 const ball = p.level.ball;
-                if (!ball) return;
+                if (!ball || p.bargeWindup) return;
 
                 if (p.actionTimer > 0) {
                     p.actionTimer -= Time.deltaTime;
@@ -637,6 +637,22 @@ function registerOutfieldStates(PlayerStates, d) {
 
                 // Human should not run AI chase/auto-tackle; Idle path owns movement
                 if (p.humanControlled && applyHumanMovement(p)) {
+                    return;
+                }
+
+                if (p.isSliding) {
+                    p.slideTimer -= Time.deltaTime;
+                    p.moveTo(p.slideTarget, 1.6);
+                    const contact = ball.owner && ball.owner.team !== p.team && ball.z < 0.6
+                        && canTackleOwner(ball.owner)
+                        && dist2d(p.x, p.y, ball.x, ball.y) <= ai(p).FOOT_TACKLE_RANGE + 0.25;
+                    if (contact || p.slideTimer <= 0) {
+                        p.isSliding = false;
+                        p.slideTimer = 0;
+                        p.slideTarget = null;
+                        if (contact) attemptTackle(p, ball, 'slide');
+                        else p.actionTimer = ai(p).TACKLE_RECOVERY_SLIDE * 0.5;
+                    }
                     return;
                 }
 
@@ -685,7 +701,7 @@ function registerOutfieldStates(PlayerStates, d) {
                     // Prefer standing foot tackle when close enough; only slide from outside foot range
                     if (
                         tackleType === 'slide'
-                        && !p.isSliding
+                        && ai(p).ALLOW_SLIDE_TACKLES !== false
                         && ball.z < 0.6
                         && dist > footRange + 0.35
                         && (!p.tackleAttemptCooldown || p.tackleAttemptCooldown <= 0)
@@ -695,22 +711,6 @@ function registerOutfieldStates(PlayerStates, d) {
                         p.slideTarget = { x: ball.x, y: ball.y };
                         p.frame = 4;
                         SoundDB.play('slide');
-                    }
-
-                    if (p.isSliding) {
-                        p.slideTimer -= Time.deltaTime;
-                        p.slideTarget = { x: ball.x, y: ball.y };
-                        p.moveTo(p.slideTarget, 1.6);
-                        const slideDist = dist2d(p.x, p.y, ball.x, ball.y);
-                        if (slideDist < footRange + 0.25 || p.slideTimer <= 0) {
-                            if (slideDist < ai(p).SLIDE_TACKLE_RANGE + 0.3) {
-                                attemptTackle(p, ball, 'slide');
-                            } else {
-                                p.actionTimer = ai(p).TACKLE_RECOVERY_SLIDE * 0.5;
-                            }
-                            p.isSliding = false;
-                            p.slideTimer = 0;
-                        }
                         return;
                     }
 
@@ -976,7 +976,8 @@ function registerOutfieldStates(PlayerStates, d) {
 
                             // Accuracy cone (shared kick-noise helper). Boundary set-pieces use a
                             // tighter cone — large angle error near the line re-triggers OOB.
-                            const noisyPass = applyKickDirectionNoise(nx, ny, p.effectiveAccuracy || 70, {
+                            const direct = p.humanKick?.directAim ? p.humanKick.aimDir : null;
+                            const noisyPass = direct ? {nx:direct.x,ny:direct.y} : applyKickDirectionNoise(nx, ny, p.effectiveAccuracy || 70, {
                                 angleScale: (isThrowIn || isCorner) ? 0.0035 : 0.0075,
                                 playmaker: !!(p.traits && p.traits.includes('Playmaker'))
                             });
@@ -1014,7 +1015,8 @@ function registerOutfieldStates(PlayerStates, d) {
                                     p,
                                     'short'
                                 );
-                                ball.kick(devNx * speed, devNy * speed, 2.5, 0);
+                                const strength = Number.isFinite(p.humanKick?.power) ? 0.85 + 0.35 * p.humanKick.power : 1;
+                                ball.kick(devNx * speed * strength, devNy * speed * strength, 2.5, 0);
                                 ball.isThrowInFlight = true;
                                 if (level) level._setPieceBallSpot = null;
                             } else {
@@ -1221,11 +1223,18 @@ function registerOutfieldStates(PlayerStates, d) {
                     p.z = (1.0 - progress) * 0.4; // Scaled down exit animation
 
                     // Contact: XY close + ball still in header band (timing window)
-                    const xyOk = dist2d(p.x, p.y, ball.x, ball.y) < 1.9;
+                    const arc = p.level.arcAssist;
+                    const bending = arc && ball.lastKicker === arc.wizard && Math.abs(ball.curveForce) > 1;
+                    const xyOk = dist2d(p.x, p.y, ball.x, ball.y) < (bending ? 1 : 1.9);
                     const bz = ball.z || 0;
                     const zOk = bz >= 0.55 && bz < 2.15;
                     if (!p.isHeading && ball.owner === null && xyOk && zOk) {
                         p.isHeading = true;
+                        if (bending && p.team !== arc.wizard.team) {
+                            p.level.arcAssist = null;
+                            p.level._manualPendingReceiver = null;
+                            p.level._manualPassSwitchTicks = 0;
+                        }
                         applyHeaderContact(p, ball);
                     }
                 }

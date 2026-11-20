@@ -127,6 +127,8 @@ function forceKickoffPass(s) {
         taker.fsm.changeState(PlayerStates.Pass);
     } else {
         taker.fsm.changeState(PlayerStates.Dribble);
+        s.setPieceType = '';
+        s._kickoffPins = null;
     }
 }
 
@@ -202,6 +204,9 @@ function tickSetPieceCountdown(s, type, _setupDuration) {
         return;
     }
 
+    if (s.setPieceReadyPhase && s.handleManualRestart?.(type)) {
+        return;
+    }
     if (s.setPieceReadyPhase && s.stateTimer <= 0) {
         executeSetPieceKick(s, type);
         SoundDB.play('whistle');
@@ -268,21 +273,20 @@ const MatchStates = {
         },
         execute(s) {
             const dt = Time.deltaTime;
-            // 1. Tick match clock
-            const timeScale = 5400 / s.matchDuration;
-            s.matchTimer += dt * timeScale;
-            s.updateDynamicStrategies();
+            if (!s.goalTarget) {
+                const timeScale = 5400 / s.matchDuration;
+                s.matchTimer += dt * timeScale;
+                s.updateDynamicStrategies();
 
-            // Halftime trigger
-            if (!s.halfTimeTriggered && s.matchTimer >= 2700) {
-                s.halfTimeTriggered = true;
-                s.fsm.changeState(MatchStates.Halftime);
-                return;
-            }
-            // Fulltime trigger
-            if (s.matchTimer >= 5400) {
-                s.fsm.changeState(MatchStates.Fulltime);
-                return;
+                if (!s.halfTimeTriggered && s.matchTimer >= 2700) {
+                    s.halfTimeTriggered = true;
+                    s.fsm.changeState(MatchStates.Halftime);
+                    return;
+                }
+                if (s.matchTimer >= 5400) {
+                    s.fsm.changeState(MatchStates.Fulltime);
+                    return;
+                }
             }
 
             if (!Settings.HEADLESS) {
@@ -317,7 +321,8 @@ const MatchStates = {
     Goal: {
         name: 'goal',
         enter(s) {
-            s.stateTimer = 5.0;
+            const winningGoal = s.goalTarget && Math.max(s.scoreA, s.scoreB) >= s.goalTarget;
+            s.stateTimer = winningGoal ? (s.winningGoalCelebrationSeconds ?? 1.4) : (s.goalCelebrationSeconds ?? 5.0);
             SoundDB.play('whistle');
             SoundDB.play('net');
             // roar also spikes the continuous crowd bed
@@ -339,6 +344,10 @@ const MatchStates = {
             }
 
             if (s.stateTimer <= 0) {
+                if (s.goalTarget && Math.max(s.scoreA, s.scoreB) >= s.goalTarget) {
+                    s.fsm.changeState(MatchStates.Fulltime);
+                    return;
+                }
                 s.kickoffTeam = s.goalScoredTeam === 'A' ? 'B' : 'A';
                 s.resetToKickoff();
                 s.fsm.changeState(MatchStates.Kickoff);
@@ -1173,7 +1182,8 @@ class Simulator extends GameObject {
 
     setupTeam(teamKey, teamName, formationName) {
         const formation = this.formationsPreset[formationName];
-        if (!formation || formation.length !== 11) {
+        const count = this.teamPlayerCounts?.[teamKey] ?? (this.playersPerTeam || 11);
+        if (!formation || formation.length !== count) {
             const available = Object.keys(this.formationsPreset || {}).sort().join(', ');
             throw new Error(`Unknown or invalid formation "${formationName}" (available: ${available || 'none'})`);
         }
@@ -1202,6 +1212,7 @@ class Simulator extends GameObject {
 
         team.createPlayers({
             formation,
+            playerCount: count,
             teamStatsList,
             defaultStats: this.defaultStats || {},
             code
@@ -1722,7 +1733,7 @@ class Simulator extends GameObject {
         if (stateName === 'GoHome' || stateName === 'ReturnHome') return true;
         // Hold Wait through kickoff countdown and until set-piece bookkeeping clears
         if (stateName === 'Wait' && (this.matchState !== 'play' || this.setPieceType)) return true;
-        if (p.actionTimer > 0 || p.kickTimer > 0) return true;
+        if (p.actionTimer > 0 || p.kickTimer > 0 || (stateName === 'ChaseBall' && p.isSliding)) return true;
         if (isGkProtected(p)) return true;
         return false;
     }
@@ -2149,7 +2160,7 @@ class Simulator extends GameObject {
                 const attackingTeam = defendingTeam === 'A' ? 'B' : 'A';
                 const lastTouchTeam = this.lastTouchPlayer ? this.lastTouchPlayer.team : attackingTeam;
 
-                if (lastTouchTeam === defendingTeam) {
+                if (this.allowCorners !== false && lastTouchTeam === defendingTeam) {
                     this.setPieceType = 'corner';
                     this.setPieceSide = 'left';
                     this.setPieceKickingTeam = attackingTeam;
@@ -2203,7 +2214,7 @@ class Simulator extends GameObject {
                 const attackingTeam = defendingTeam === 'A' ? 'B' : 'A';
                 const lastTouchTeam = this.lastTouchPlayer ? this.lastTouchPlayer.team : attackingTeam;
 
-                if (lastTouchTeam === defendingTeam) {
+                if (this.allowCorners !== false && lastTouchTeam === defendingTeam) {
                     this.setPieceType = 'corner';
                     this.setPieceSide = 'right';
                     this.setPieceKickingTeam = attackingTeam;
@@ -2847,7 +2858,7 @@ class Simulator extends GameObject {
             const kickSquad = this.getTeam(kickingTeam);
             const defSquad = this.getTeam(defendingTeam);
             const gk = kickSquad ? kickSquad.getGoalkeeper(true) : this.players.find(p => p.team === kickingTeam && p.role === 'GK');
-            if (gk) {
+            if (gk && !gk.isSentOff) {
                 gk.x = kickX;
                 gk.y = kickY;
                 this.ball.x = kickX;
@@ -2878,6 +2889,18 @@ class Simulator extends GameObject {
                     } else if (side === 'right' && p.x > fw - s(18.75)) {
                         p.x = fw - s(20.3125) - Math.random() * 2;
                     }
+                }
+            }
+            if (!gk || gk.isSentOff) {
+                const taker = this.findSetPieceTaker(kickingTeam, kickX, kickY);
+                this.ball.owner = taker;
+                this.ball.x = kickX;
+                this.ball.y = kickY;
+                this.ball.z = 0;
+                if (taker) {
+                    taker.x = kickX;
+                    taker.y = kickY;
+                    taker.orientation = side === 'left' ? 2 : 6;
                 }
             }
         }
@@ -3658,6 +3681,8 @@ class Simulator extends GameObject {
     }
 
     evaluateTeamSubstitutions(team) {
+        // Career mode delegates this team's changes to the manager. AI defaults stay intact.
+        if (team.managerControlled) return;
         if (!team.bench || team.bench.length === 0) return;
         if (team.substitutionsMade >= 3) return;
 
