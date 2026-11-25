@@ -155,7 +155,7 @@ function registerGkStates(PlayerStates, d) {
      * @param {{ dive?: boolean }} [opts]
      */
     function tryGkCatch(p, ball, opts = {}) {
-        if (!ball || (ball.owner && ball.owner.team === p.team) || isOwnOutgoingBall(p, ball)) return false;
+        if (!ball || ball.passRoute?.teamCross || ball.pierceOpponent || (!p.neutralKeeper && ball.owner && ball.owner.team === p.team) || isOwnOutgoingBall(p, ball)) return false;
         if (ball.owner && ball.owner.team !== p.team) {
             // Contested at feet — only claim if opponent is not stacked on the ball
             if (dist2d(p.x, p.y, ball.owner.x, ball.owner.y) < 1.2) return false;
@@ -348,7 +348,7 @@ function registerGkStates(PlayerStates, d) {
                     return;
                 }
 
-                const teammateHasBall = ball.owner && ball.owner.team === p.team;
+                const teammateHasBall = !p.neutralKeeper && ball.owner && ball.owner.team === p.team;
                 if (!teammateHasBall && !isOwnOutgoingBall(p, ball) && (isBallNearGoal || shotThreat)) {
                     const pred = gkPredictBall(p, ball);
                     const approachDist = dist2d(p.x, p.y, pred.x, pred.y);

@@ -67,6 +67,10 @@ class Ball extends GameObject {
     }
 
     start() {
+        this.claimable = true;
+        this.pierceOpponent = null;
+        this.onShotBlock = null;
+        this.nutmeg = null;
         this.z = 0;
         this.vx = 0;
         this.vy = 0;
@@ -95,6 +99,9 @@ class Ball extends GameObject {
 
     kick(vx, vy, vz, curveForce = 0) {
         this.kickSequence++;
+        this.pierceOpponent = null;
+        this.onShotBlock = null;
+        this.nutmeg = null;
         this.passRoute = null;
         if (this.owner) {
             // Logic-time claim lockout — set-piece vs open play durations from Settings.AI
@@ -110,6 +117,16 @@ class Ball extends GameObject {
         this.curveForce = curveForce;
         this.isThrowInFlight = false;
         this.isShot = false;
+    }
+
+    kickGroundPass(vx, vy, curveForce = 0) {
+        const passer = this.owner;
+        this.kick(vx, vy, 0, curveForce);
+        if (passer?.humanKick?.kind === 'pass' && passer.level?.drivenGroundPasses && !passer.level.setPieceType) {
+            // Give soft manual passes time to roll past the passer's pickup range.
+            passer.kickerClaimCooldown = Math.max(passer.kickerClaimCooldown, 0.6);
+        }
+        passer?.level?.onGroundPass?.(passer);
     }
 
     syncToOwner() {
@@ -165,6 +182,9 @@ class Ball extends GameObject {
         const rebound = touchlineRebound(this.y, this.vy, this.maxY, this.radius);
         if (!rebound) return;
         if (rebound.vy !== this.vy) {
+            this.pierceOpponent = null;
+            this.onShotBlock = null;
+            this.nutmeg = null;
             this.curveForce *= -.55;
             SoundDB.play('bounce', { volume: .5 });
         }
@@ -176,10 +196,18 @@ class Ball extends GameObject {
     bounceOffEndLine(previous = this) {
         if (!this.endLineGoals || this.owner || (this.x >= 0 && this.x <= this.maxX)) return;
         const { prevX, prevY, prevZ } = previous;
+        const goal = this.x < 0 ? this.endLineGoals.left : this.endLineGoals.right;
+        if (prevX >= 0 && prevX <= this.maxX && goal.resolveSweptCrossbar?.(this, previous, this.onCrossbarHit)) {
+            this.passRoute = null;
+            return;
+        }
         const rebound = endLineRebound({ x: this.x, y: this.y, z: this.z, prevX, prevY, prevZ },
             this.vx, this.maxX, this.radius, this.endLineGoals);
         if (!rebound) return;
         if (rebound.vx !== this.vx) {
+            this.pierceOpponent = null;
+            this.onShotBlock = null;
+            this.nutmeg = null;
             this.curveForce *= -.55;
             SoundDB.play('bounce', { volume: .5 });
         }
@@ -289,7 +317,8 @@ class Ball extends GameObject {
 
                 // Ground friction (shared model with ball_prediction.js)
                 if (this.z === 0) {
-                    const friction = Math.pow(frictionBase, dt);
+                    const surfaceFriction = this.groundFrictionAt?.((prevX + this.x) / 2, (prevY + this.y) / 2);
+                    const friction = Math.pow(surfaceFriction ?? frictionBase, dt);
                     this.vx *= friction;
                     this.vy *= friction;
 

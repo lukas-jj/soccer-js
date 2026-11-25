@@ -1,6 +1,8 @@
 const {Time}=require('../core/lib/time.js');
 const {Utils}=require('../core/lib/utils.js');
 const {SPIN_RADIUS}=require('./powers.js');
+const {SoundDB}=require('../core/lib/sounddb.js');
+const {applyActionLock}=require('../core/entities/player.js');
 
 const SHOT_SPEED=8;
 const WINDUP=.45;
@@ -8,6 +10,8 @@ const RELOAD=4.2;
 const MAX_RANGE=18;
 const HIT_RADIUS=1.05;
 const SLOW_DURATION=2;
+const STREAKER_SPEED=7;
+const SECURITY_RADIUS=1.2;
 
 function updateSlimerSlows(players){
  for(const p of players)p.movementEffectScale=p.slimedUntil > Time.time ? 0.5 : 1;
@@ -19,9 +23,11 @@ function stepSlimeShots(sim){
   sim.slimeShots.length=0;
   return;
  }
- const targets=sim.teamA.players.filter(p=>!p.isSentOff);
+ const home=sim.teamA.players.filter(p=>!p.isSentOff);
+ const away=sim.teamB.players.filter(p=>!p.isSentOff);
  const {width,height}=Utils.getFieldBounds();
  sim.slimeShots=sim.slimeShots.filter(shot=>{
+  const targets=shot.team==='A'?away:home;
   const from={x:shot.x,y:shot.y};
   const step=SHOT_SPEED*Time.deltaTime;
   shot.x+=shot.dx*step;shot.y+=shot.dy*step;shot.distance+=step;
@@ -51,7 +57,7 @@ function updateSlimers(sim){
  }
  const targets=sim.teamA.players.filter(p=>!p.isSentOff);
  sim.teamB.getOutfieldPlayers().filter(player=>!sim.opponent?.lineup||player.isSlimer).forEach((slimer,index)=>{
-  if(slimer.isSentOff||slimer.actionTimer>0||slimer.smokeBlind||slimer.burningUntil>Time.time){
+  if(slimer.isSentOff||slimer.actionTimer>0||slimer.burningUntil>Time.time){
    slimer.slimeWindup=null;
    return;
   }
@@ -76,4 +82,60 @@ function updateSlimers(sim){
  });
 }
 
-module.exports={updateSlimers,updateSlimerSlows,stepSlimeShots};
+function startStreaker(sim){
+ const opponents=sim.teamB.getOutfieldPlayers();
+ const {width,height,centerX,centerY}=Utils.getFieldBounds();
+ const x=opponents.length?opponents.reduce((sum,p)=>sum+p.x,0)/opponents.length:centerX;
+ const y=opponents.some(p=>p.y<centerY)?0:height;
+ sim.slimerStreaker={
+  x:Math.max(3,Math.min(width-3,x)),y,direction:y===0?1:-1,
+  nextShotAt:Time.time,shoved:new Set()
+ };
+ SoundDB.play('whistle');
+}
+
+function stepStreaker(sim){
+ const streaker=sim.slimerStreaker;
+ if(!streaker)return;
+ const {width,height}=Utils.getFieldBounds();
+ if(sim.matchState!=='play'||sim.setPieceType||streaker.y<-4||streaker.y>height+4){
+  sim.slimerStreaker=null;
+  return;
+ }
+ const {x,direction,shoved}=streaker;
+ const previousY=streaker.y;
+ const y=streaker.y+=direction*STREAKER_SPEED*Time.deltaTime;
+ if(y>=0&&y<=height&&Time.time>=streaker.nextShotAt){
+  let target,range=MAX_RANGE;
+  for(const opponent of sim.teamB.players){
+   if(opponent.isSentOff||opponent.slimedUntil>Time.time)continue;
+   const distance=Math.hypot(opponent.x-x,opponent.y-y);
+   if(distance>=.1&&distance<range){target=opponent;range=distance;}
+  }
+  if(target){
+   sim.slimeShots??=[];
+   sim.slimeShots.push({team:'A',x,y,dx:(target.x-x)/range,dy:(target.y-y)/range,distance:0});
+   streaker.nextShotAt=Time.time+.48;
+  }
+ }
+ for(const guard of streakerGuards(streaker)){
+  const previousGuardY=guard.y+previousY-y;
+  for(const player of sim.players){
+   if(player.isSentOff||shoved.has(player))continue;
+   const nearestY=Math.max(Math.min(previousGuardY,guard.y),Math.min(Math.max(previousGuardY,guard.y),player.y));
+   if(Math.hypot(player.x-guard.x,player.y-nearestY)>SECURITY_RADIUS)continue;
+   const side=Math.sign(player.x-guard.x)||Math.sign(guard.x-x);
+   player.x=Math.max(.45,Math.min(width-.45,player.x+side*2.4));
+   applyActionLock(player,.45);
+   player.updateGlobalPos();
+   shoved.add(player);
+   SoundDB.play('tackle');
+  }
+ }
+}
+
+function streakerGuards({x,y,direction}){
+ return [{x:x-.95,y:y-direction*1.8},{x:x+.95,y:y-direction*2.8}];
+}
+
+module.exports={updateSlimers,updateSlimerSlows,stepSlimeShots,startStreaker,stepStreaker,streakerGuards};

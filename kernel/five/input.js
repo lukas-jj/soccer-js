@@ -1,7 +1,7 @@
 const {KeyboardInput,commandFromFrame}=require('../core/lib/input_keyboard.js');
 const {Utils}=require('../core/lib/utils.js');
-const ALIASES={KeyJ:'Digit1',KeyK:'Digit3',KeyL:'Digit2',Tab:'Digit4',MouseLeft:'Digit1',MouseRight:'Digit3'};
-const GAME_KEYS=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyJ','KeyK','KeyL','KeyE','KeyG','Space','ShiftLeft','ShiftRight','Digit1','Digit2','Digit3']);
+const ALIASES={KeyJ:'Digit1',KeyK:'Digit3',KeyL:'Digit2',KeyQ:'Digit4',MouseLeft:'Digit1',MouseRight:'Digit3'};
+const GAME_KEYS=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyJ','KeyK','KeyL','KeyR','KeyF','KeyT','KeyE','KeyG','Space','ShiftLeft','ShiftRight','Digit1','Digit2','Digit3']);
 class FiveInput {
  constructor(){this.keys=new KeyboardInput();this.move=null;this.aim=null;this.enabled=true;this.cleanups=[];}
  pollFrame(){
@@ -14,6 +14,7 @@ class FiveInput {
   command.switchKeeper=!!this.squad&&f.pressed.has('KeyG');
   command.powerDown=!!this.squad&&f.down.has('Space');
   command.usePower=!!this.squad&&f.pressed.has('Space');
+  if(this.squad)command.teamMove=f.pressed.has('KeyE')?'auto':f.pressed.has('KeyR')?'power':f.pressed.has('KeyF')?'header':f.pressed.has('KeyT')?'overhead':null;
   command.callPass=!this.squad&&f.pressed.has('KeyE');
   if(this.move){const w=Utils.worldDeltaFromScreenDelta(this.move.x,this.move.y),len=Math.hypot(w.ox,w.oy)||1;const strength=Math.min(1,Math.hypot(this.move.x,this.move.y));command.moveX=w.ox/len*strength;command.moveY=w.oy/len*strength;}
   command.sprint=command.sprint&&(this.canSprint?.()??true);
@@ -23,9 +24,9 @@ class FiveInput {
  }
  getAim(){return this.pointer&&this.resolvePointerAim?this.resolvePointerAim(this.pointer):this.aim;}
  attach(target){
-  const isGameKey=code=>GAME_KEYS.has(code)||(this.squad&&code==='Tab');
-  const down=e=>{if(!this.enabled||!isGameKey(e.code)||/INPUT|TEXTAREA|SELECT/.test(e.target?.tagName||''))return;if(e.code==='Tab'&&e.target!==this.gameSurface)return;e.preventDefault();if(!e.repeat)this.keys.debugKeyDown(e.code);};
-  const up=e=>{if(isGameKey(e.code)){if(e.code!=='Tab')e.preventDefault();this.keys.debugKeyUp(e.code);}};
+  const isGameKey=code=>GAME_KEYS.has(code)||(this.squad&&code==='KeyQ');
+  const down=e=>{if(!this.enabled||!isGameKey(e.code)||/INPUT|TEXTAREA|SELECT/.test(e.target?.tagName||''))return;e.preventDefault();if(!e.repeat)this.keys.debugKeyDown(e.code);};
+  const up=e=>{if(isGameKey(e.code)){e.preventDefault();this.keys.debugKeyUp(e.code);}};
   target.addEventListener('keydown',down);target.addEventListener('keyup',up);
   this.cleanups.push(()=>{target.removeEventListener('keydown',down);target.removeEventListener('keyup',up);});
  }

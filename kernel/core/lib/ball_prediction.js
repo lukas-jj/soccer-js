@@ -297,7 +297,7 @@ function futurePosition(ball, time, opts = {}) {
     if (!ball) return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
     const bz = ball.z || 0;
     const bvz = ball.vz || 0;
-    if (ball.touchlineBoards || bz > 0.0001 || bvz > 0) {
+    if (ball.touchlineBoards || ball.groundFrictionAt || bz > 0.0001 || bvz > 0) {
         return predict3D(ball, time, opts);
     }
     const groundPred = futurePositionFromVelocity(
@@ -487,7 +487,8 @@ function predict3D(ball, time, opts = {}) {
 
         // Ground friction
         if (z === 0) {
-            const friction = Math.pow(frictionBase, dt);
+            const surfaceFriction = ball.groundFrictionAt?.((prevX + x) / 2, (prevY + y) / 2);
+            const friction = Math.pow(surfaceFriction ?? frictionBase, dt);
             vx *= friction;
             vy *= friction;
 
@@ -823,7 +824,9 @@ function applyKickDirectionNoise(nx, ny, accuracy = 70, opts = {}) {
     if (opts.playmaker) angleScale *= 0.6;
     const rand = typeof opts.random === 'function' ? opts.random : Math.random;
     const maxAngle = (100 - acc) * angleScale;
-    const angle = (rand() - 0.5) * 2 * maxAngle;
+    const roll = (rand() - 0.5) * 2;
+    const minAngle = Math.min(maxAngle, opts.minAngle ?? 0);
+    const angle = (roll < 0 ? -1 : 1) * (minAngle + Math.abs(roll) * (maxAngle - minAngle));
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
     return {
@@ -831,6 +834,19 @@ function applyKickDirectionNoise(nx, ny, accuracy = 70, opts = {}) {
         ny: nx * sinA + ny * cosA,
         angle
     };
+}
+
+function manualAimScatter(accuracy) {
+    // Very low ratings send the kick wide even on the most favorable roll.
+    const lowAccuracy = Math.max(0, (50 - accuracy) / 50);
+    const angleScale = 0.0025 + 0.0055 * lowAccuracy;
+    const maxAngle = Math.max(0, 100 - accuracy) * angleScale;
+    return { angleScale, maxAngle, minAngle: Math.min(maxAngle, 0.55 * lowAccuracy * lowAccuracy) };
+}
+
+function applyManualAimAccuracy(player, x, y, accuracy = player.effectiveAccuracy ?? 70) {
+    if (!player.level?.manualAimUsesAccuracy || accuracy >= 100) return { nx: x, ny: y };
+    return applyKickDirectionNoise(x, y, accuracy, manualAimScatter(accuracy));
 }
 
 /**
@@ -908,6 +924,8 @@ module.exports = {
     findAirIntercept,
     findHeaderOpportunity,
     applyKickDirectionNoise,
+    applyManualAimAccuracy,
+    manualAimScatter,
     sampleKickCurveForce,
     buildNoisyKickVelocity,
     predict3D,

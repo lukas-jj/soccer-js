@@ -2,13 +2,13 @@ require('./mock_env.js');
 const assert=require('node:assert/strict');
 const {Settings}=require('../kernel/settings.js');
 const {Time}=require('../kernel/core/lib/time.js');
-const {PlayerStates}=require('../kernel/core/entities/player.js');
+const {PlayerStates,activeBeastForm,attemptTackle,computeShootKick}=require('../kernel/core/entities/player.js');
 const {resolveControlledPlayer,tickManualControl,humanFacingDir}=require('../kernel/core/lib/manual_control.js');
 const {FiveMatch,CHARACTERS,configureFive}=require('../kernel/five/match.js');
 const {FiveInput}=require('../kernel/five/input.js');
 Settings.app={camX:0,camY:0,canvas:{width:1280,height:800}};
 (async()=>{
- assert.equal(CHARACTERS.length,4);
+ assert.equal(CHARACTERS.length,5);
  for(const c of CHARACTERS){
   const match=await FiveMatch.create(c.id,42,{headless:true});
   assert.equal(match.sim.teamA.players.length,5);assert.equal(match.sim.teamB.players.length,5);
@@ -74,6 +74,64 @@ Settings.app={camX:0,camY:0,canvas:{width:1280,height:800}};
  for(let i=0;i<24;i++){Time.advanceFixedLogicStep();m.updateSprintReserve(false);}
  assert.ok(m.sprintReserve>=.25);
  assert.equal(m.input.pollFrame().command.sprint,true);
+ const druid=await FiveMatch.create('druid',77,{squad:true,practice:true,practiceDrill:'bear',headless:true});
+ druid.headless=false;
+ const pressForm=()=>{
+  druid.input.press('Space');druid.step();druid.input.release('Space');
+  return druid.player;
+ };
+ let beast=pressForm();
+ assert.equal(activeBeastForm(beast),'bear');
+ assert.equal(beast.beastUntil-Time.time,3);
+ const defender=druid.practiceRunner;
+ const druidSim=druid.sim;
+ assert.equal(attemptTackle(defender,druidSim.ball,'foot'),false);
+ assert.equal(defender.tackleAttemptCooldown,0);
+ assert.equal(druidSim.ball.owner,beast);
+ Time.time=beast.beastUntil;
+ assert.equal(activeBeastForm(beast),null);
+ attemptTackle(defender,druidSim.ball,'foot');
+ assert.ok(defender.tackleAttemptCooldown>0,'bear becomes tackleable again after three seconds');
+
+ druid.resetPractice('wolf');
+ beast=pressForm();
+ assert.equal(activeBeastForm(beast),'wolf');
+ const moveFromRest=()=>{
+  beast.x=23;beast.y=17;beast.vx=0;beast.vy=0;beast._currentSpeed=0;beast.currentStamina=1;
+  beast.moveTo({x:30,y:17});
+  return beast.x-23;
+ };
+ const wolfStep=moveFromRest();
+ Time.time=beast.beastUntil;
+ assert.ok(Math.abs(wolfStep/moveFromRest()-1.25)<1e-9);
+
+ druid.resetPractice('eagle');
+ beast=pressForm();
+ assert.equal(activeBeastForm(beast),'eagle');
+ const goal=druidSim.getGoals().right;
+ const keeper=druidSim.teamB.getGoalkeeper(true);
+ keeper.isSentOff=false;
+ const ball=druidSim.ball;
+ beast.humanKick={kind:'shoot',directAim:true,aimDir:{x:-1,y:0},curveForce:5};
+ beast.stats.shotAccuracy=100;
+ for(const [keeperY,cornerY] of [[goal.yMin,goal.yMax-.65],[goal.yMax,goal.yMin+.65]]){
+  keeper.y=keeperY;
+  const kick=computeShootKick(beast);
+  assert.ok(kick.nx>0);
+  assert.equal(kick.curveForce,0);
+  assert.ok(Math.abs(ball.y+(goal.lineX-ball.x)*kick.ny/kick.nx-cornerY)<1e-9);
+ }
+ const accurate=computeShootKick(beast);
+ const random=Math.random;
+ beast.stats.shotAccuracy=20;
+ Math.random=()=>.9;
+ try{
+  const inaccurate=computeShootKick(beast);
+  assert.ok(Math.abs(inaccurate.ny-accurate.ny)>.1,'Eagle still uses the shooter’s accuracy around the chosen corner');
+ }finally{Math.random=random;}
+ Time.time=beast.beastUntil;
+ beast.stats.shotAccuracy=100;
+ assert.ok(computeShootKick(beast).nx<-.96,'normal shot aiming resumes within the cursor aim cone after the form ends');
  Settings.HEADLESS=true;
  const full=await FiveMatch.create(CHARACTERS[2].id,91,{headless:true,duration:12});
  for(let i=0;i<40000&&!full.finished;i++)full.step();

@@ -263,7 +263,7 @@ class Team extends GameObject {
 
     getGoalkeeper(includeSentOff = false) {
         return this.players.find(p => p.role === 'GK' && (includeSentOff || !p.isSentOff))
-            || this.players.find(p => p.role === 'GK')
+            || (this.allowSentOffKeeperFallback !== false && this.players.find(p => p.role === 'GK'))
             || null;
     }
 

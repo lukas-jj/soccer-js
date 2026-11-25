@@ -892,7 +892,9 @@ function tryBallShotBlocking(sim, dt = 0.05) {
     const opponentTeam = shooterTeam === 'A' ? sim.teamB : sim.teamA;
     if (!opponentTeam) return false;
 
-    const opponents = opponentTeam.getOutfieldPlayers();
+    const pierce = ball.pierceOpponent;
+    const onShotBlock = ball.onShotBlock;
+    const opponents = pierce ? opponentTeam.players.filter(p => !p.isSentOff) : opponentTeam.getOutfieldPlayers();
     if (!opponents || !opponents.length) return false;
 
     // Ball travel segment in the current tick
@@ -908,6 +910,8 @@ function tryBallShotBlocking(sim, dt = 0.05) {
     const nx = toTx / dist;
     const ny = toTy / dist;
 
+    if (pierce || onShotBlock) opponents.sort((a, b) => (a.x - b.x) * nx + (a.y - b.y) * ny);
+
     const ballR = ball.radius || 0.11;
     // Arcade: thinner block body so more shots thread the box (still can block point-blank)
     const plyRDefault = 0.28;
@@ -920,11 +924,11 @@ function tryBallShotBlocking(sim, dt = 0.05) {
         : 1.55;
 
     // Check height: outfielders block low drives; lofted shots clear more often (ISS)
-    if (ball.z >= blockHeight) return false;
+    if (!pierce && ball.z >= blockHeight) return false;
 
     for (let i = 0; i < opponents.length; i++) {
         const opp = opponents[i];
-        if (!opp || opp.isSentOff || opp.role === 'GK') continue;
+        if (!opp || opp.isSentOff || (opp.role === 'GK' && !pierce)) continue;
 
         // Opponent in local frame (x along line, y perpendicular)
         const relx = opp.x - from.x;
@@ -939,6 +943,7 @@ function tryBallShotBlocking(sim, dt = 0.05) {
         // Reuse lane geometry: can the opponent reach the lane in the time the ball takes to get there?
         // timeForBall is the fraction of dt corresponding to localX
         const timeFraction = Math.max(0, Math.min(1, localX / dist));
+        if (pierce && ball.prevZ + (ball.z - ball.prevZ) * timeFraction >= blockHeight) continue;
         const timeForBall = timeFraction * dt;
 
         // Smaller reaction time for last-ditch block, e.g. 0.02s
@@ -951,6 +956,12 @@ function tryBallShotBlocking(sim, dt = 0.05) {
         const reach = oppSpeed * Math.max(0, timeForBall - reactionTime) + ballR + plyR;
 
         if (Math.abs(localY) < reach) {
+            if (ball.pierceOpponent) {
+                ball.pierceOpponent = null;
+                pierce(opp, nx, ny, localY < 0 ? -1 : 1);
+                clearIfkOnTouch(ball, opp);
+                continue;
+            }
             // Blocked!
             ball.isShot = false;
 
@@ -997,6 +1008,8 @@ function tryBallShotBlocking(sim, dt = 0.05) {
             const overlapD = ballR + plyR;
             ball.x = opp.x + dx * overlapD;
             ball.y = opp.y + dy * overlapD;
+            ball.onShotBlock = null;
+            onShotBlock?.(opp, nx, ny, localY < 0 ? -1 : 1);
 
             // Block deflection — body impact + crowd reaction
             const soundDbModule = require('./sounddb.js');

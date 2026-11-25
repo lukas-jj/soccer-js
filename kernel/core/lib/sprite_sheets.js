@@ -6,6 +6,7 @@ const { appUrl } = require('./app_paths.js');
 const RIG_PATH_REL = 'assets/animation_rigs/1.json';
 const PARTS_BASE_REL = 'assets/sprites';
 const TYPE_INDEX = 1;
+const styledIndexSheets = new Map();
 
 /**
  * WebGL Recoloring Engine
@@ -390,6 +391,81 @@ function composeBaseSheet(rig, partBanks) {
     return canvas;
 }
 
+// The head tiles contain indexed pixels, so details added here use the same
+// palette slots as the existing face and follow the rig in every animation.
+function styleHeadTiles(tiles, { race, style }) {
+    return tiles.map((tile, direction) => {
+        const canvas = document.createElement('canvas');
+        const { width, height } = tile;
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(tile, 0, 0);
+        const pixels = ctx.getImageData(0, 0, width, height);
+        const { data } = pixels;
+        const offset = (x, y) => (y * width + x) * 4;
+        const paint = (x, y, index) => {
+            data.set([index, 0, 0, index ? 255 : 0], offset(x, y));
+        };
+        const front = direction === 4;
+        const visibleFace = direction > 0;
+        const hasHair = (x, y, center) => ({
+            crest: center < 3 || y >= 4,
+            braid: y >= 2 || center < 5,
+            crop: y >= 2,
+            bun: y >= 3 || x >= 3 && x <= 7,
+            shaved: false,
+            curls: y >= 2 || x % 4 < 2,
+            swept: y >= Math.floor(x / 5),
+            pony: y >= 2 || x <= 4,
+            bob: y >= 1 || center < 5
+        }[style]);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const index = data[offset(x, y)];
+                const center = Math.abs(x - 7.5);
+                if (y < 2 && (x < 2 - y || x >= width - 2 + y)) {
+                    paint(x, y, 0);
+                } else if (index === 11 && y < 7) {
+                    const hairline = hasHair(x, y, center);
+                    // Above the skull is transparent. A shaved head keeps skin
+                    // across the scalp and replaces the back of the hairbank.
+                    if (style === 'shaved' || (!hairline && y >= 3)) paint(x, y, 8);
+                    else if (!hairline) paint(x, y, 0);
+                    else if ((x + y * 2) % 7 === 0) paint(x, y, 12);
+                } else if (index === 11 && style === 'shaved') {
+                    paint(x, y, 9);
+                } else if (index === 11 && ['crop', 'crest', 'swept'].includes(style) && y > 9) {
+                    paint(x, y, visibleFace && x >= 3 && front ? 9 : 12);
+                }
+            }
+        }
+        if (style === 'braid' || style === 'pony') {
+            for (let y = 9; y < 17; y++) {
+                const x = y >= 14 && style === 'pony' ? 0 : 1;
+                paint(x, y, y % 3 ? 11 : 12);
+            }
+        }
+        if (race === 'price') {
+            // Pointed ears read from the back and sides. Tusks read from the front.
+            paint(0, 7, 10); paint(1, 8, 8); paint(1, 9, 9);
+            paint(15, 7, 10); paint(14, 8, 8); paint(14, 9, 9);
+            if (visibleFace) {
+                paint(12, 13, 14); paint(12, 14, 14);
+                if (front) { paint(3, 13, 14); paint(3, 14, 14); }
+            }
+        } else if (race === 'cole') {
+            for (let x = 1; x < 15; x++) paint(x, 6, 1);
+            paint(front ? 12 : 3, 7, 1);
+        } else if (race === 'mendes' && visibleFace) {
+            const x = front ? 8 : 13;
+            paint(x, 4, 10); paint(x, 5, 14); paint(x - 1, 5, 10); paint(x, 6, 10);
+        }
+        ctx.putImageData(pixels, 0, 0);
+        return canvas;
+    });
+}
+
 const DEFAULT_PLAYER_COLORS = {
     skin:          '#FFC8A0',
     skinShadow:    '#C88C64',
@@ -438,7 +514,7 @@ function cpuRecolorIndexedSheet(baseIndexSheet, mergedPalette) {
     return outCanvas;
 }
 
-async function registerPlayerSheetsFromPng(palettes, playerStats, activeTeamNames = null) {
+async function registerPlayerSheetsFromPng(palettes, playerStats, activeTeamNames = null, { refresh = false, imageDB = ImageDB } = {}) {
     if (Settings.HEADLESS) return;
 
     let teamsToProcess = Object.keys(palettes);
@@ -449,18 +525,18 @@ async function registerPlayerSheetsFromPng(palettes, playerStats, activeTeamName
 
     let needsLoading = false;
     for (const teamName of teamsToProcess) {
-        if (!ImageDB.get(`player_${teamName}_main`) || !ImageDB.get(`player_${teamName}_gk`)) {
+        if (!imageDB.get(`player_${teamName}_main`) || !imageDB.get(`player_${teamName}_gk`)) {
             needsLoading = true; break;
         }
         const players = playerStats?.teams?.[teamName] || [];
         for (const p of players) {
-            if (!ImageDB.get(`player_${teamName}_jersey_${p.jersey}`)) {
+            if (!imageDB.get(`player_${teamName}_jersey_${p.jersey}`)) {
                 needsLoading = true; break;
             }
         }
         if (needsLoading) break;
     }
-    if (!needsLoading) return;
+    if (!needsLoading && !refresh) return;
 
     // Load data and compile the pure indexed master atlas
     const { rig, partBanks } = await loadModularData();
@@ -488,9 +564,9 @@ async function registerPlayerSheetsFromPng(palettes, playerStats, activeTeamName
         for (const player of teamPlayers) {
             const jersey = player.jersey;
             const key = `player_${teamName}_jersey_${jersey}`;
-            if (ImageDB.get(key)) continue;
+            if (!refresh && imageDB.get(key)) continue;
 
-            const isGK = player.role === 'GK' || jersey === 1;
+            const isGK = player.role === 'GK' || (!refresh && jersey === 1);
             const teamKit = isGK ? kits.gk : kits.main;
 
             const merged = mergePlayerPalette(
@@ -498,29 +574,40 @@ async function registerPlayerSheetsFromPng(palettes, playerStats, activeTeamName
                 Object.assign({}, DEFAULT_PLAYER_COLORS, player.colors || {})
             );
 
+            if (player.head && partBanks.head) {
+                const { race, style } = player.head;
+                const headKey = `${race}:${style}`;
+                if (!styledIndexSheets.has(headKey)) {
+                    const head = styleHeadTiles(partBanks.head, player.head);
+                    styledIndexSheets.set(headKey, composeBaseSheet(rig, { ...partBanks, head }));
+                }
+                imageDB.register(key, cpuRecolorIndexedSheet(styledIndexSheets.get(headKey), merged));
+                continue;
+            }
+
             // ⚡ GPU recolors in <1ms and returns final output, or CPU fallback
             const recolored = webglSupported
                 ? gpuRenderer.renderToCanvas(merged)
                 : cpuRecolorIndexedSheet(baseIndexSheet, merged);
-            ImageDB.register(key, recolored);
+            imageDB.register(key, recolored);
         }
 
         const mainKey = `player_${teamName}_main`;
-        if (!ImageDB.get(mainKey)) {
+        if (refresh || !imageDB.get(mainKey)) {
             const merged = mergePlayerPalette(kits.main, DEFAULT_PLAYER_COLORS);
             const recolored = webglSupported
                 ? gpuRenderer.renderToCanvas(merged)
                 : cpuRecolorIndexedSheet(baseIndexSheet, merged);
-            ImageDB.register(mainKey, recolored);
+            imageDB.register(mainKey, recolored);
         }
 
         const gkKey = `player_${teamName}_gk`;
-        if (!ImageDB.get(gkKey)) {
+        if (refresh || !imageDB.get(gkKey)) {
             const merged = mergePlayerPalette(kits.gk, DEFAULT_PLAYER_COLORS);
             const recolored = webglSupported
                 ? gpuRenderer.renderToCanvas(merged)
                 : cpuRecolorIndexedSheet(baseIndexSheet, merged);
-            ImageDB.register(gkKey, recolored);
+            imageDB.register(gkKey, recolored);
         }
     }
 }

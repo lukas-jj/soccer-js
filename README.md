@@ -171,22 +171,58 @@ npm run build
 npm run dev
 ```
 
-Choose a starting player and select **New Run**. You open with one outfielder
-and no goalkeeper. The opener is against four Goblin Slimers and a Slime Keeper. The outfielders’ slow
+Select **New Run** to roll starter abilities and shirt numbers, then choose a starter, name your team, and set its shirt color. You open with one outfielder
+and no goalkeeper. The opener is against four Slimers and a Slime Keeper. The outfielders’ slow
 projectiles halve your movement speed for two seconds on contact. Later
 encounters draw different opponents and may include a keeper.
 
-Win four matches to finish a run. The Slimers play golden goal, the Orc Brothers
-play first to two, and later encounters play first to three. Wins earn gold and
-losses cost gold before a rematch. After each non-final match, choose to enter the tavern, train, rest, or continue.
-Entering the tavern reveals three recruits and commits that visit. Practice a
-recruit's ability before buying or continue without a purchase. Rest doubles
-sprint stamina for the next match. Boards around the pitch bounce misses back into play.
+After selecting your starter, select **Play match** to kick off the first fixture.
+
+Five clubs play a single round-robin league. Your club plays four one-minute
+fixtures, with Mix Bag FC as the final opponent. A win earns three points and
+145 gold plus club bonuses. A draw earns one point and a loss earns zero.
+Only wins pay match gold. The club at the top wins the Cup. Goal difference,
+then goals scored, break points ties. Clubs still level share the place.
+
+After every match, pick a player upgrade. During the rest between fixtures,
+check the standings and choose **Tavern**, **Explore**, or **Shop**. Finishing
+or skipping the rest activity takes you straight to the next match.
+
+The tavern always offers an Orc goalkeeper while your squad has no keeper.
+Open **Events** on the title screen to try any of the three special challenges
+or seven text encounters. Tests use a temporary squad and gold balance.
+During a rest, **Explore** reveals a randomly rolled encounter.
+Street 1v1 is the most common special challenge. Text encounters include the
+chance to sign Varek Stonewall, a rare keeper with 84 Saving.
+
+- **Street Kick-Ups** pays 100, 200, or 300 gold for a target of 10, 20, or 30.
+  Move your mouse or drag on the court to steer the boot. Flick upward to
+  kick the falling ball. You can also use Space or the Kick button.
+- **Crossbar Challenge** gives you three shots with your selected player's Shot Speed and Shot Accuracy. Between shots, collect the next ball at midfield. Hit all three for 300 gold and the Crossbar Relic, or earn 50 gold per hit on a partial result. The relic pays 100 gold per kick that hits the opposition crossbar in completed league matches and events, including Street 1v1.
+  Aim at the bar and hold Shoot to lift the ball.
+- **Street 1v1** lets you pick a squad player to face a rolled challenger.
+  The defender passes to start each attack. Both players attack the same goal
+  against a neutral keeper, with up to three 10-second attacks each. Tackles
+  change possession, and rebound walls keep the ball in play. An outright win lets you choose
+  250 gold or recruit the challenger if your squad has room. A loss or tie awards
+  a random potion. Inspired by the [Top Baller 1v1 rulebook](https://topballer.co/1v1-rulebook/).
+The market's Scouting Contract lets you sign one outfield player from a beaten
+team when your squad has room. The market also sells
+permanent Perks and single-use items. Try either category from the main
+menu. In matches, use single-use items from the counted icons in the top
+toolbar. Boards around the pitch bounce misses back into play.
 
 **Test Match** sets your side and the opponents independently from one to five.
 Custom sides can include a keeper when they have at least two players. Test Match
-also offers the Goblin Slimers and Orc Brothers presets. **Abilities**
-opens the individual practice drills.
+also offers the Slimers and Horde FC presets. **Abilities**
+opens individual and team practice drills.
+
+League fixtures and Test Matches with more than one player on either side
+start with an untimed warmup. Select **Kick off** when ready. One-on-one games
+and special events start directly.
+
+Use [PLAYTEST_FEEDBACK.md](PLAYTEST_FEEDBACK.md) to collect notes from any
+playtest for Codex to review in one pass.
 
 Control follows the receiver on an aimed pass and the ball carrier in
 possession. In test matches with a keeper, **G** switches to them on defense.
@@ -200,22 +236,26 @@ Left click passes, right click clears, and **L** dives off the ball.
 | K / right mouse | Shoot or shoulder tackle |
 | L | Lob |
 | Shift | Sprint |
-| Tab | Switch defenders |
+| Q | Select the outfield teammate nearest the ball |
 | G | Switch to or from the goalkeeper while defending |
 | Space | Use the active player's special power |
+| T | Cross for Overhead Kick and finish with the receiver facing away from goal |
 | Escape | Pause or resume |
 
-Hold and release to charge a kick. Movement aims when the pointer is off the
-pitch. Touch controls include a movement stick and buttons for all match actions.
+In open play, tap Pass to nudge the ball along the aim direction. Hold Pass
+longer for a stronger pass, then release to kick. Movement aims when the pointer
+is off the pitch. Touch controls include a movement stick and buttons for all
+match actions.
 
-- **Grum, Orc defender.** Orc Barge takes the ball from an opponent in
+- **Grum, Orc Warrior.** Barge takes the ball from an opponent in
   reach. A miss leaves Grum recovering briefly.
 - **Nyx, Rogue winger.** Shadow Step dashes in the movement direction, or
   sideways when standing still.
 - **Rune, Wizard playmaker.** Press **Space** to arm Swerve, aim at a teammate,
   then click to send the pass or hold and steer to shape the bend. In a solo
   match, Rune can bend the ball into space for his own run. Hold Shoot to
-  lock the shot aim, steer the bend, and release to fire.
+  lock the shot aim, steer the bend, and release to fire. Clone is another
+  Mage ability. It sends out a decoy while the caster keeps the ball.
 - **Asha, Knight striker.** A high shooting stat and regular charged shots.
 
 Each power recharges automatically. The icon beside the active player shows
@@ -226,3 +266,17 @@ kicks, aim and release **J** for a short pass or **K** / **L** for a clearance.
 `npm run test:five` checks the match, powers, run progression, and interface.
 The browser entry is `html/soccer-rogue.html`, with game code under
 `kernel/five/` and the interface in `kernel/apps/soccer-rogue/app.js`.
+
+### Event · The Last Ref
+
+When someone asks where the refs are, point to a pile of bones and skulls.
+The last ref hides in the shadows and swears he'll never ref another game.
+The Last Ref has a 2% chance to appear when you explore. He sells one Red Card for 260 gold.
+
+Each card is a single-use item. Select it from a compact icon with a count
+in the top match toolbar, then choose any opposing player on the pitch to
+send off for the rest of the match. Back out of targeting to keep the card.
+
+A future variation could offer the Last Ref as a playable recruit. Whenever the ref takes damage or
+gets stunned, he gives a random player on the pitch a yellow card. The card
+halves that player's movement speed. The target can be on either team.

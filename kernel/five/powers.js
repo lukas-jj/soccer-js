@@ -6,35 +6,55 @@ const {PlayerStates,applyActionLock,canTackleOwner}=require('../core/entities/pl
 const {humanFacingDir,orientationDir,isBusyKicking,clearManualCharge}=require('../core/lib/manual_control.js');
 const {estimatePassGroundSpeed,isPassSafeFromAllOpponents}=require('../core/lib/pass_safety.js');
 const {armKickerClaimCooldown}=require('../core/lib/logic_regulator.js');
-const {samplePassRoute}=require('../core/lib/ball_prediction.js');
+const {getGroundFrictionBase,samplePassRoute}=require('../core/lib/ball_prediction.js');
 
-const {holdPower01}=require('../core/lib/manual_commands.js');
-const {deploySmoke,startBlazeSlide}=require('./hazards.js');
+const {holdPower01,slideLaunchDir}=require('../core/lib/manual_commands.js');
+const {startBlazeSlide}=require('./hazards.js');
+const {createClones}=require('./clones.js');
+const {abilityKickAim,abilityKickSpeed}=require('./kick_stats.js');
 
 const ARC_BEND_TICKS=6;
-const TELE_PASS={name:'Tele-Pass',hint:'Press Space with the ball, aim, then pass with J or left click. Rune teleports to meet the ball.',cooldown:12,icon:'tele',level2:'Press Space, then click two spots to pass and teleport through both.'};
-const PORTAL_PASS={name:'Portal Pass',hint:'Press Space with the ball, aim at a touchline, then pass through to the opposite side.',cooldown:12,icon:'portal',level2:'Press Space, aim at a touchline, then pass or hold Shoot and release for a charged portal shot.'};
-const GOAL_WARP={name:'Goal Warp',hint:'Hold Space and aim at your own end to move your goal for five seconds.',cooldown:6,icon:'warp',level2:'Hold Space and aim to move either goal for five seconds.'};
-const SPIN_KICK={name:'Orc Spin',hint:'Press Space to toe-punt a carried or loose ball and clear nearby hazards.',cooldown:9,icon:'spin',level2:'Press Space to launch the ball and knock back nearby players on both teams.'};
-const SMOKE_BOMB={name:'Smoke Bomb',hint:'Press Space to blind enemies in the smoke and make them wander.',cooldown:11,icon:'smoke',level2:'Press Space to drop smoke and move 65% faster for 3.5 seconds.'};
-const BLAZE_SLIDE={name:'Blaze Slide',hint:'Aim and press Space to slide tackle. The fire trail makes either team run in panic.',cooldown:10,icon:'blaze'};
+const TELE_PASS={name:'Tele-Pass',hint:'Press Space with the ball, aim, then pass with J or left click. Rune teleports to meet the ball.',cooldown:7,icon:'tele',level2:'Press Space, then click two spots to pass and teleport through both.'};
+const PORTAL_PASS={name:'Portal Pass',hint:'Press Space with the ball, aim at a touchline, then pass through to the opposite side.',cooldown:7,icon:'portal',level2:'Press Space to arm. Pass through a sideline, or aim at a sideline or back wall and hold Shoot, then release.'};
+const GOAL_WARP={name:'Goal Warp',hint:'Hold Space and aim at your own end to move your goal for five seconds.',cooldown:5.5,icon:'warp',level2:'Hold Space and aim to move either goal for five seconds.'};
+const SPIN_KICK={name:'Spin',hint:'Press Space to toe-punt a carried or loose ball and clear nearby hazards.',cooldown:5.5,icon:'spin',level2:'Press Space to launch the ball and knock back nearby players on both teams.'};
+const STEPOVER={name:'Stepover',hint:'With the ball, press Space to briefly stun nearby defenders.',cooldown:5.5,icon:'stepover'};
+const CLONE={name:'Clone',hint:'With the ball, aim and press Space. A decoy draws players for 1.5 seconds.',level2:'The decoy lasts five seconds.',cooldown:6,icon:'clone'};
+const NUTMEG={name:'Nutmeg',hint:'Ground passes aimed between a defender’s legs have a 50% chance to slip through. A nutmeg grants 50% more movement speed for 3 seconds.',level2:'A ground pass has a 50% chance to slip through up to two defenders in its path. Each nutmeg grants 50% more movement speed for 3 seconds.',cooldown:0,passive:true,icon:'nutmeg'};
+const BLAST_SHOT={name:'Orc Blast Shot',hint:'Every shot knocks the first defender it hits aside and stuns them for three seconds.',cooldown:0,passive:true,icon:'blast'};
+const BLAZE_SLIDE={name:'Blazing Slide',hint:'Move and press Space off the ball to slide tackle in your direction of travel. The fire trail makes either team run in panic.',cooldown:6.5,icon:'blaze'};
+const DRUID_FORMS={
+ bear:{name:'Bear Form',form:'bear',hint:'Press Space to become a bear and resist tackles for 3 seconds.',cooldown:8,icon:'bear'},
+ wolf:{name:'Wolf Form',form:'wolf',hint:'Press Space to become a wolf and move 25% faster for 3 seconds.',cooldown:7,icon:'wolf'},
+ eagle:{name:'Eagle Form',form:'eagle',hint:'Press Space to become an eagle for 3 seconds. Shoot while transformed to aim at a corner automatically.',cooldown:8,icon:'eagle'}
+};
 const SPIN_RADIUS=3.2,SPIN_DURATION=.38;
 const CLASSIC_POWERS={
- price:{name:'Orc Barge',hint:'Aim and press Space to charge through players on either team. Your ball spills ahead.',extra:'charge',cooldown:12,icon:'barge',level2:'Press Space to charge with more knockback and a longer stun. Carrying the ball makes the charge faster and longer.'},
- cole:{name:'Shadow Step',hint:'Hold a direction and press Space to dash.',extra:'shadow',cooldown:8,icon:'dash',level2:'Hold a direction and press Space to dash. Press Space again for a second dash.'},
- mendes:{name:'Swerve',hint:'Press Space, then hold Pass or Shoot. Steer the bend and release to kick.',extra:'swerve',cooldown:10,icon:'arc',level2:'Swerve shots can bend more at full charge.'}
+ druid:DRUID_FORMS.bear,
+ price:{name:'Barge',hint:'Aim and press Space to charge through players on either team. Your ball spills ahead.',extra:'charge',cooldown:7,icon:'barge',level2:'Press Space to charge with more knockback and a longer stun. Carrying the ball makes the charge faster and longer.'},
+ cole:{name:'Shadow Step',hint:'Hold a direction and press Space to dash.',extra:'shadow',cooldown:4.5,icon:'dash',level2:'Hold a direction and press Space to dash. Press Space again for a second dash.'},
+ mendes:{name:'Swerve',hint:'Press Space, hold Pass or Shoot, then drag to aim and shape the bend. Release to kick.',extra:'swerve',cooldown:6,icon:'arc',level2:'Swerve shots can bend more at full charge.'}
 };
 const POWERS={...CLASSIC_POWERS,price:SPIN_KICK,mendes:GOAL_WARP};
 const RECRUIT_POWERS={
  barge:CLASSIC_POWERS.price,spin:SPIN_KICK,dash:CLASSIC_POWERS.cole,
- arc:CLASSIC_POWERS.mendes,tele:TELE_PASS,portal:PORTAL_PASS,warp:GOAL_WARP,smoke:SMOKE_BOMB,blaze:BLAZE_SLIDE
+ arc:CLASSIC_POWERS.mendes,tele:TELE_PASS,portal:PORTAL_PASS,warp:GOAL_WARP,blaze:BLAZE_SLIDE,blast:BLAST_SHOT,nutmeg:NUTMEG,clone:CLONE,stepover:STEPOVER
+};
+const STARTER_POWER_POOLS={
+ price:['barge','spin','blaze','blast'],
+ cole:['dash','nutmeg','stepover'],
+ mendes:['arc','tele','portal','warp','clone']
 };
 function characterPower(id,drill,recruitPower){
- if(recruitPower!==undefined)return RECRUIT_POWERS[recruitPower];
+ if(recruitPower!==undefined)return RECRUIT_POWERS[recruitPower==='overhead'?'nutmeg':recruitPower]??DRUID_FORMS[recruitPower];
 
+ if(id==='druid'&&Object.hasOwn(DRUID_FORMS,drill))return DRUID_FORMS[drill];
  if(id==='mendes'&&drill==='tele-pass')return TELE_PASS;
  if(id==='mendes'&&drill==='portal-pass')return PORTAL_PASS;
- if(id==='cole'&&drill==='smoke-bomb')return SMOKE_BOMB;
+ if(id==='mendes'&&drill==='clone')return CLONE;
+ if(id==='cole'&&drill==='stepover')return STEPOVER;
+ if(id==='cole'&&drill==='nutmeg')return NUTMEG;
+ if(id==='price'&&drill==='blast-shot')return BLAST_SHOT;
  if(id==='price'&&drill==='blaze-slide')return BLAZE_SLIDE;
  return drill===id?CLASSIC_POWERS[id]:POWERS[id];
 }
@@ -64,7 +84,8 @@ function outlet(sim,player){
   if(distance<3||distance>16)continue;
   const speed=estimatePassGroundSpeed(from,target,player,'short');
   if(!isPassSafeFromAllOpponents(from,target,target,opponents,speed))continue;
-  passTo(sim,player,target,{vx:dx/distance*speed,vy:dy/distance*speed,curveForce:0});
+  const dir=abilityKickAim(player,{x:dx/distance,y:dy/distance},false);
+  passTo(sim,player,target,{vx:dir.x*speed,vy:dir.y*speed,curveForce:0});
   return true;
  }
  return false;
@@ -79,8 +100,10 @@ function bargeDirection(sim,player,cmd){
  return humanFacingDir(player,aimFromPlayer(sim,player,cmd));
 }
 function bargeReach(upgrades,player,ball){
- const carryBonus=player?.powerLevel===2&&ball?.owner===player?1.6:0;
- return (upgrades.has('charge')?3.9:3.2)+carryBonus;
+ const upgraded=player?.powerLevel===2;
+ if(player?.team==='B')return (upgrades.has('charge')?3.9:3.2)+(upgraded&&ball?.owner===player?1.6:0);
+ const carryBonus=upgraded&&ball?.owner===player?2.4:0;
+ return (upgraded?6.4:5.6)+(upgrades.has('charge')?1:0)+carryBonus;
 }
 function findBargeImpacts(players,player,dir,reach){
  return players.filter(p=>p!==player&&!p.isSentOff&&canTackleOwner(p)).map(opponent=>{
@@ -100,18 +123,18 @@ function finishBarge(sim,player,dir,impact,upgrades){
   ball.kick(dir.x*7,dir.y*7,0);
   ball.capturePrevPosition();
   player.fsm.changeState(PlayerStates.Idle);
-  return {text:'Orc Barge',sound:impact?'tackle':'pass'};
+  return {text:'Barge',sound:impact?'tackle':'pass'};
  }
  if(!impact){
   if(player.team!=='A')applyActionLock(player,.7);
-  return {text:'Orc Barge'};
+  return {text:'Barge'};
  }
  ball.owner=player;
  ball.syncToOwner();
  player.fsm.changeState(PlayerStates.Dribble);
  player.frame=1;
  const passed=upgrades.has('outlet')&&outlet(sim,player);
- return {text:passed?'Breakaway Outlet':'Orc Barge stunned the carrier',sound:'tackle'};
+ return {text:passed?'Breakaway Outlet':'Barge stunned the carrier',sound:'tackle'};
 }
 function charge(sim,player,cmd,upgrades){
  const dir=bargeDirection(sim,player,cmd);
@@ -122,9 +145,9 @@ function charge(sim,player,cmd,upgrades){
   player.bargeCharging=true;
   player.orientation=(Math.round(Math.atan2(dir.y,dir.x)/(Math.PI/4))+10)%8;
   player.z=0;player.frame=1;
-  const speed=player.powerLevel===2&&sim.ball.owner===player?8.3:7;
+ const speed=player.powerLevel===2?(sim.ball.owner===player?14.5:13.2):11.8;
   sim.bargeCharge={player,dir,remaining:reach,speed,hit:new Set(),started:Time.time,upgrades};
-  return {text:'Orc Barge'};
+  return {text:'Barge'};
  }
  const carrier=sim.ball.owner;
  const impact=carrier&&carrier.team!==player.team?findBargeImpacts([carrier],player,dir,reach)[0]:null;
@@ -140,7 +163,7 @@ function updateBargeCharge(sim){
  const barge=sim.bargeCharge;
  if(!barge)return null;
  const {player,dir,upgrades}=barge;
- if(sim.matchState!=='play'||sim.setPieceType||player.isSentOff||player.actionTimer>0||player.smokeBlind||player.burningUntil>Time.time){
+ if(sim.matchState!=='play'||sim.setPieceType||player.isSentOff||player.actionTimer>0||player.burningUntil>Time.time){
   clearBargeCharge(sim);
   return null;
  }
@@ -173,20 +196,32 @@ function updateBargeCharge(sim){
  return null;
 }
 function knockBackBargeTarget(sim,player,opponent,dir){
- const duration=.32;
  const upgraded=player.powerLevel===2;
- const knockback=player.bargeKnockback??(upgraded?8.5:4.2);
+ const distance=player.bargeKnockback??(player.team==='A'?(upgraded?10:5.5):(upgraded?8.5:4.2));
+ const stun=player.team==='A'?(upgraded?1.35:.65):(upgraded?1.1:.45);
+ launchKnockback(sim,opponent,dir,distance,stun);
+}
+function launchKnockback(sim,opponent,dir,distance,stun,duration=.32){
  const {width,height}=Utils.getFieldBounds();
  const rangeX=dir.x>0?(width-.5-opponent.x)/dir.x:dir.x<0?(.5-opponent.x)/dir.x:Infinity;
  const rangeY=dir.y>0?(height-.5-opponent.y)/dir.y:dir.y<0?(.5-opponent.y)/dir.y:Infinity;
  sim.bargeFlights??=[];
  sim.bargeFlights=sim.bargeFlights.filter(flight=>flight.opponent!==opponent);
  sim.bargeFlights.push({opponent,x:opponent.x,y:opponent.y,dir,
-  distance:Math.max(0,Math.min(knockback,rangeX,rangeY)),start:Time.time,duration});
- applyActionLock(opponent,duration+(upgraded?1.1:.45));
- opponent.fsm.changeState(PlayerStates.Idle);
+  distance:Math.max(0,Math.min(distance,rangeX,rangeY)),start:Time.time,duration});
+ applyActionLock(opponent,duration+stun);
+ opponent.fsm.changeState(opponent.role==='GK'?PlayerStates.Goalkeeper:PlayerStates.Idle);
 }
-function arcFlight(from,target,opponents,curve,side){
+function launchBlastShot(sim,player){
+ sim.ball.onShotBlock=(opponent,nx,ny,side)=>{
+  const dir={x:(nx-ny*side)*Math.SQRT1_2,y:(ny+nx*side)*Math.SQRT1_2};
+  const knockbackDuration=.18;
+  launchKnockback(sim,opponent,dir,1,3-knockbackDuration,knockbackDuration);
+  sim.powerEffect={origin:{x:opponent.x,y:opponent.y},x:opponent.x+dir.x,y:opponent.y+dir.y,
+   color:player.powerColor||'#ff917f',until:Time.time+.4};
+ };
+}
+function arcFlight(from,target,opponents,curve,side,speed){
  const dx=target.x-from.x,dy=target.y-from.y,distance=Math.hypot(dx,dy);
  const field=Utils.getFieldBounds();
  const forward={x:dx/distance,y:dy/distance};
@@ -198,7 +233,7 @@ function arcFlight(from,target,opponents,curve,side){
  });
  const flights=[];
  for(const sign of side?[-side]:[-1,1]){
-  const bend=Math.min(distance*.37,curve*.34)*sign;
+  const bend=Math.min(distance*.54,curve*.48)*sign;
   const lengths=[0];
   let previous=0;
   for(let i=1;i<=24;i++){
@@ -206,7 +241,7 @@ function arcFlight(from,target,opponents,curve,side){
    lengths.push(lengths[i-1]+Math.hypot(distance/24,sideOffset-previous));
    previous=sideOffset;
   }
-  const duration=Math.max(.28,lengths.at(-1)/19+.12);
+  const duration=Math.max(.28,lengths.at(-1)/speed+.12);
   const route={start:from,end,normal,bend,duration,lengths,height:screened?.8:.18,elapsed:0};
   const preview=Array.from({length:19},(_,i)=>samplePassRoute(route,duration*i/18));
   if(preview.some(p=>p.x<.15||p.x>field.width-.15||p.y<.15||p.y>field.height-.15))continue;
@@ -224,14 +259,14 @@ function arcFlight(from,target,opponents,curve,side){
  flights.sort((a,b)=>b.clearance-a.clearance);
  return flights[0];
 }
-function pickArcTarget(sim,player,cmd){
+function pickArcTarget(sim,player,cmd,minAlignment=-1){
  const dir=humanFacingDir(player,cmd);
  const from=sim.ball;
  return sim.teamA.players.filter(p=>p!==player&&p.role!=='GK'&&!p.isSentOff)
   .map(p=>{
    const dx=p.x-from.x,dy=p.y-from.y,distance=Math.hypot(dx,dy);
    return {p,distance,alignment:(dx*dir.x+dy*dir.y)/(distance||1)};
-  }).filter(p=>p.distance>=3&&p.distance<=22)
+  }).filter(p=>p.distance>=3&&p.distance<=22&&p.alignment>=minAlignment)
   .sort((a,b)=>Number(b.alignment>=.15)-Number(a.alignment>=.15)
    || (b.alignment-a.alignment)*18+a.distance-b.distance)[0]?.p;
 }
@@ -288,7 +323,34 @@ function warpGoal(sim,player,cmd){
  SoundDB.play('lob');
  return {text:'Goal Warp · 5s',handled:false};
 }
+function wallDistances(start,dir,width,height){
+ return {
+  x:dir.x>0?(width-.8-start.x)/dir.x:dir.x<0?(.8-start.x)/dir.x:Infinity,
+  y:dir.y>0?(height-.8-start.y)/dir.y:dir.y<0?(.8-start.y)/dir.y:Infinity
+ };
+}
+function portalAim(sim,dir,canUseBackWall){
+ const {ball}=sim;
+ const {width,height}=Utils.getFieldBounds();
+ const walls=wallDistances(ball,dir,width,height);
+ const backWall=canUseBackWall&&walls.x<walls.y;
+ const range=backWall?walls.x:walls.y;
+ if(!Number.isFinite(range)||range<=0||range>walls.x)return null;
+ const end={x:ball.x+dir.x*range,y:ball.y+dir.y*range};
+ if(backWall&&Object.values(sim.getGoals()).some(goal=>end.y>=goal.yMin-ball.radius&&end.y<=goal.yMax+ball.radius))return null;
+ return {end,backWall,exit:{x:backWall?width-end.x:end.x,y:backWall?end.y:height-end.y,dx:dir.x,dy:dir.y}};
+}
+
 function tickSpacePower(sim,player,cmd,power){
+ if(power?.form&&cmd.usePower&&!cmd.switchPlayer&&!cmd.switchKeeper){
+  const unavailable=powerUnavailable(sim,player,power);
+  if(unavailable)return {text:unavailable,handled:false};
+  player.beastForm=power.form;
+  player.beastUntil=Time.time+3;
+  if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
+  SoundDB.play('lob');
+  return {text:power.name,handled:false};
+ }
  const warp=sim.goalWarp;
  if(warp?.steering){
   if(!cmd.powerDown||player!==warp.player||cmd.switchPlayer||cmd.switchKeeper)warp.steering=false;
@@ -297,16 +359,33 @@ function tickSpacePower(sim,player,cmd,power){
    if(target)steerGoalWarp(warp,target);
   }
  }
- if((power===SMOKE_BOMB||power===BLAZE_SLIDE)&&cmd.usePower&&!cmd.switchPlayer&&!cmd.switchKeeper){
+ if((power===BLAZE_SLIDE||power===CLONE||power===STEPOVER)&&cmd.usePower&&!cmd.switchPlayer&&!cmd.switchKeeper){
   const unavailable=powerUnavailable(sim,player,power);
   if(unavailable)return {text:unavailable,handled:false};
-  if(power===SMOKE_BOMB)deploySmoke(sim,player);
-  else startBlazeSlide(sim,player,bargeDirection(sim,player,cmd));
+  if(power===STEPOVER){
+   if(sim.ball.owner!==player)return {text:'Stepover needs possession',handled:false};
+   for(const defender of sim.teamB.players){
+    if(defender.isSentOff||Math.hypot(defender.x-player.x,defender.y-player.y)>2.3)continue;
+    defender.fsm.changeState(PlayerStates.Idle);
+    applyActionLock(defender,Math.max(defender.actionTimer,.8));
+   }
+   player.stepoverPose={started:Time.time,orientation:player.orientation};
+  }
+  else if(power===CLONE){
+   if(sim.ball.owner!==player)return {text:'Clone needs possession',handled:false};
+   createClones(sim,player,cmd);
+  }
+  else {
+   if(sim.ball.owner===player)return {text:'Blazing Slide requires playing off the ball',handled:false};
+   const lastMove=player._humanInput;
+   const facing=slideLaunchDir(player,lastMove,null,orientationDir(player));
+   startBlazeSlide(sim,player,slideLaunchDir(player,cmd,null,facing));
+  }
   clearManualCharge(sim);
   player._humanInput=null;
   if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
-  SoundDB.play(power===SMOKE_BOMB?'lob':'slide');
-  return {text:power.name,handled:true};
+  SoundDB.play(power===BLAZE_SLIDE?'slide':'lob');
+  return {text:power.name,handled:power!==CLONE&&power!==STEPOVER};
  }
  if(power===GOAL_WARP&&cmd.usePower&&!cmd.switchPlayer&&!cmd.switchKeeper)return warpGoal(sim,player,cmd);
  if(cmd.usePower&&!cmd.switchPlayer&&!cmd.switchKeeper&&power===SPIN_KICK){
@@ -330,7 +409,7 @@ function tickSpacePower(sim,player,cmd,power){
   if(unavailable)return {text:unavailable,handled:false};
   if(sim.ball.owner!==player)return {text:`${power.name} needs possession`,handled:false};
   sim.arcCast=null;
-  sim.teleCast={player};
+  sim.teleCast={player,portal,aimRoll:Math.random()};
   clearManualCharge(sim);
  }
  const cast=sim.teleCast,ball=sim.ball;
@@ -340,11 +419,7 @@ function tickSpacePower(sim,player,cmd,power){
  const aim=cast.first&&cmd.directPointerAim
   ? {...cmd,aimX:cmd.aimX+origin.x-start.x,aimY:cmd.aimY+origin.y-start.y}
   : cmd;
- const dir=humanFacingDir(player,aim);
- const distance=aim.directPointerAim?Math.min(10,Math.hypot(aim.aimX,aim.aimY)):8;
- const {width,height}=Utils.getFieldBounds();
- const wallX=dir.x>0?(width-.8-start.x)/dir.x:dir.x<0?(.8-start.x)/dir.x:Infinity;
- const wallY=dir.y>0?(height-.8-start.y)/dir.y:dir.y<0?(.8-start.y)/dir.y:Infinity;
+ const intendedDir=humanFacingDir(player,aim);
  if(canChargeShot&&cmd.shootDown)cast.shotTicks=(cast.shotTicks??0)+1;
  if(canChargeShot&&cmd.shoot)cast.shotTicks=Math.max(1,cast.shotTicks??0);
  const portalShot=canChargeShot&&cmd.shootReleased&&cast.shotTicks>0&&!cmd.pass;
@@ -353,30 +428,38 @@ function tickSpacePower(sim,player,cmd,power){
  const charging=canChargeShot&&cast.shotTicks>0&&!launch;
  if(charging)cmd.shoot=cmd.shootDown=cmd.shootReleased=false;
  if(portalShot)cast.shotTicks=0;
- const range=portal?wallY:Math.max(0,Math.min(distance,wallX,wallY));
- const valid=portal?Number.isFinite(range)&&range>=0&&range<=wallX:range>=2;
- if(!valid){
+ const dir=abilityKickAim(player,intendedDir,portalShot||charging,()=>cast.aimRoll);
+ const preview=portal?portalAim(sim,dir,canChargeShot):null;
+ let end=preview?.end;
+ if(!portal){
+  const distance=aim.directPointerAim?Math.min(10,Math.hypot(aim.aimX,aim.aimY)):8;
+  const {width,height}=Utils.getFieldBounds();
+  const walls=wallDistances(start,dir,width,height);
+  const range=Math.min(distance,walls.x,walls.y);
+  if(range>=2)end={x:start.x+dir.x*range,y:start.y+dir.y*range};
+ }
+ if(!end){
   cast.end=null;cast.exit=null;
-  return launch?{text:portal?'Aim toward a touchline':'Aim farther away',handled:true}
+  return launch?{text:portal?(canChargeShot?'Aim at a sideline or back wall outside the goal':'Aim toward a touchline'):'Aim farther away',handled:true}
    :cmd.usePower?{text:`${power.name} armed`,handled:false}:null;
  }
- const end={x:start.x+dir.x*range,y:start.y+dir.y*range};
  cast.end=end;
- cast.exit=portal?{x:end.x,y:height-end.y,dx:dir.x,dy:dir.y}:null;
+ cast.exit=preview?.exit??null;
+ if(preview?.backWall&&cmd.pass)return {text:'Hold Shoot to use a back-wall portal',handled:true};
  if(!launch)return cmd.usePower?{text:`${power.name} armed`,handled:false}:null;
  if(power===TELE_PASS&&player.powerLevel===2&&!cast.first){
   cast.first=end;
   cast.end=null;
   return {text:'Pick the second spot',handled:true};
  }
- launchTeleLeg(sim,player,origin,cast.first??end,cast.exit&&{...cast.exit,shot:portalShot,speed:portalShot?14+shotPower*15:24},cast.first?end:null);
+ launchTeleLeg(sim,player,origin,cast.first??end,cast.exit&&{...cast.exit,shot:portalShot,speed:abilityKickSpeed(player,portalShot?14+shotPower*15:24,portalShot)},cast.first?end:null);
  sim.teleCast=null;
  if(!sim.cooldownsOff)player.powerReadyAt=Time.time+player.powerCooldown;
  return {text:power.name,handled:true};
 }
 function launchTeleLeg(sim,player,start,end,exit,next){
  const dx=end.x-start.x,dy=end.y-start.y,range=Math.hypot(dx,dy);
- const duration=exit?Math.max(.15,range/exit.speed):.22+range/24;
+ const duration=exit?range/exit.speed:.22+range/abilityKickSpeed(player,24,false);
  const route={start,end,normal:{x:0,y:0},bend:0,duration,height:0,elapsed:0};
  passTo(sim,player,null,{route,...samplePassRoute(route,0)},false);
  player._humanInput=null;
@@ -402,8 +485,10 @@ function updateTelePass(sim){
  if(flight.exit){
   const {x,y,shot}=flight.exit;
   const entry=samplePassRoute(route,0);
+  // The scripted approach skips ground friction. Carry that speed loss into the exit pass.
+  const retainedSpeed=shot?1:Math.pow(getGroundFrictionBase(),route.duration);
   Object.assign(ball,{x,y,z:0});
-  ball.kick(entry.vx,entry.vy,entry.vz);
+  ball.kick(entry.vx*retainedSpeed,entry.vy*retainedSpeed,entry.vz);
   ball.lastKicker=player;ball.isShot=!!shot;
   ball.capturePrevPosition();
   armKickerClaimCooldown(player,false);
@@ -426,11 +511,11 @@ function spinKick(sim,player,cmd){
  const canKick=ball.owner===player||(!ball.owner&&ball.z<=1.65&&Math.hypot(ball.x-player.x,ball.y-player.y)<=SPIN_RADIUS);
  if(canKick){
   const roll=Math.random();
-  const angle=Math.atan2(dir.y,dir.x)+(Math.random()-.5)*1.75;
-  const speed=30+Math.random()*13;
+  const aim=abilityKickAim(player,dir,true,Math.random,.012);
+  const speed=abilityKickSpeed(player,30+Math.random()*13,true);
   const lift=roll<.2?8+Math.random()*4:.3+Math.random()*3.5;
   const curve=roll>.72?(Math.random()<.5?-1:1)*(16+Math.random()*10):(Math.random()-.5)*7;
-  ball.kick(Math.cos(angle)*speed,Math.sin(angle)*speed,lift,curve);
+  ball.kick(aim.x*speed,aim.y*speed,lift,curve);
   armKickerClaimCooldown(player,false);
   ball.lastKicker=player;
   ball.isShot=true;
@@ -460,15 +545,25 @@ function arcShotFlight(sim,player,dir,side=dir.y>0?-1:1,ticks=0){
  const {maxX,maxY}=ball;
  const xRange=dir.x>0?(maxX+ball.radius-ball.x)/dir.x:dir.x<0?(-ball.radius-ball.x)/dir.x:Infinity;
  const yRange=dir.y>0?(maxY-ball.radius-ball.y)/dir.y:dir.y<0?(ball.radius-ball.y)/dir.y:Infinity;
- const range=Math.max(.15,Math.min(22,xRange,yRange));
+ const range=Math.max(.15,Math.min(32,xRange,yRange));
  const charge=Math.min(1,ticks/ARC_BEND_TICKS);
- const bend=side*Math.min(2.2,range*(.065+charge*(player.powerLevel===2?.035:.025)));
+ const normal={x:-dir.y,y:dir.x};
+ let bend=Math.min(7,range*(.15+charge*(player.powerLevel===2?.19:.15)));
+ // Keep the opening bend on the pitch even when aiming close to a touchline.
+ for(let i=1;i<12;i++){
+  const t=i/12,progress=.58*t,weight=Math.sin(Math.PI*t)**2;
+  const x=ball.x+dir.x*range*progress,y=ball.y+dir.y*range*progress;
+  const sx=normal.x*side,sy=normal.y*side;
+  if(sx)bend=Math.min(bend,((sx>0?maxX:0)-x)/(sx*weight));
+  if(sy)bend=Math.min(bend,((sy>0?maxY:0)-y)/(sy*weight));
+ }
+ bend=Math.max(0,bend)*side;
  const {SHOOT_SPEED_BASE=11,SHOOT_SPEED_STAT_SCALE=6}=Settings.physics;
  const speed=SHOOT_SPEED_BASE+(player.effectiveShooting||65)*SHOOT_SPEED_STAT_SCALE/100;
  const route={
   start:{x:ball.x,y:ball.y,z:ball.z},
   end:{x:ball.x+dir.x*range,y:ball.y+dir.y*range},
-  normal:{x:-dir.y,y:dir.x},bend,duration:range/speed,height:.42,elapsed:0,shot:true
+  normal,bend,duration:range/speed,height:.42,elapsed:0,shot:true
  };
  const preview=Array.from({length:Math.ceil(route.duration/.05)+1},(_,i)=>samplePassRoute(route,i*.05));
  return {route,preview,shot:true,kick:{...preview[0],route}};
@@ -486,39 +581,43 @@ function tickArcPass(sim,player,cmd,upgrades){
  if(cast&&(cast.player!==player||sim.ball.owner!==player||cmd.switchPlayer)){
   sim.arcCast=null;cast=null;
  }
- if(player.characterId!=='mendes')return null;
  if(cmd.usePower){
   if(cast){sim.arcCast=null;return {text:'Swerve cancelled',handled:!!(cast.target||cast.shot)};}
   const unavailable=powerUnavailable(sim,player,CLASSIC_POWERS.mendes);
   if(unavailable)return {text:unavailable,handled:false};
   if(sim.ball.owner!==player)return {text:'Swerve needs possession',handled:false};
-  cast=sim.arcCast={player,ticks:0};
+  cast=sim.arcCast={player,ticks:0,aimRoll:Math.random()};
   clearManualCharge(sim);
  }
  if(!cast)return null;
  if(cmd.lob){sim.arcCast=null;return null;}
  if(!cast.target&&(cmd.shoot||cast.shot)){
   const aim=humanFacingDir(player,cmd);
-  const shot=cast.shot??={aim,side:aim.y>0?-1:1,ticks:0};
+  const shot=cast.shot??={initialAim:aim,aim,side:aim.y>0?-1:1,ticks:0};
   const {shootReleased,shootDown}=cmd;
   cmd.shoot=cmd.shootDown=cmd.shootReleased=cmd.tackleBody=false;
   cmd.pass=cmd.passDown=cmd.passReleased=cmd.tackleFoot=false;
   if(shootReleased){
    sim.arcCast=null;
-   return shootArc(sim,player,arcShotFlight(sim,player,shot.aim,shot.side,shot.ticks));
+   return shootArc(sim,player,shot.flight??arcShotFlight(sim,player,abilityKickAim(player,shot.aim,true,()=>cast.aimRoll),shot.side,shot.ticks));
   }
   if(!shootDown){sim.arcCast=null;return {handled:false};}
-  const steer=shot.aim.x*aim.y-shot.aim.y*aim.x;
-  if(Math.abs(steer)>.2)shot.side=Math.sign(steer);
+  const steer=shot.initialAim.x*aim.y-shot.initialAim.y*aim.x;
+  if(Math.abs(steer)>.035)shot.side=Math.sign(steer);
+  shot.aim=aim;
   cast.ticks=++shot.ticks;
-  cast.flight=shot.flight=arcShotFlight(sim,player,shot.aim,shot.side,shot.ticks);
+  cast.flight=shot.flight=arcShotFlight(sim,player,abilityKickAim(player,shot.aim,true,()=>cast.aimRoll),shot.side,shot.ticks);
   return {handled:false};
  }
  if(player.powerLevel===2&&!cast.target&&!cmd.pass){
-  cast.flight=arcShotFlight(sim,player,humanFacingDir(player,cmd));
+  cast.flight=arcShotFlight(sim,player,abilityKickAim(player,humanFacingDir(player,cmd),true,()=>cast.aimRoll));
   return cmd.usePower?{text:'Swerve armed',handled:false}:null;
  }
  const shownFlight=cast.target&&cmd.passReleased?cast.flight:null;
+ if(cast.target&&cmd.passDown&&cmd.directPointerAim){
+  const aimed=pickArcTarget(sim,player,cmd,.985);
+  if(aimed&&aimed!==cast.target){cast.target=aimed;cast.side=null;}
+ }
  const teammate=cast.target||pickArcTarget(sim,player,cmd);
  const solo=(!teammate||teammate===player)&&sim.teamA.getOutfieldPlayers().length===1;
  const target=teammate||(solo?player:null);
@@ -543,13 +642,19 @@ function tickArcPass(sim,player,cmd,upgrades){
   sim.arcCast=null;return {text:'Aim at a teammate in passing range',handled:!!cast.target};
  }
  const cross=(dx*dir.y-dy*dir.x)/distance;
- if(cast.target&&Math.abs(cross)>.12)cast.side=-Math.sign(cross);
- const maxCurve=upgrades.has('swerve')?18:15;
- const curve=9+(maxCurve-9)*Math.min(1,cast.ticks/ARC_BEND_TICKS);
+ if(cast.target&&Math.abs(cross)>.045)cast.side=-Math.sign(cross);
+ const maxCurve=upgrades.has('swerve')?23:20;
+ const curve=10+(maxCurve-10)*Math.min(1,cast.ticks/ARC_BEND_TICKS);
  const opponents=sim.teamB.players.filter(p=>!p.isSentOff);
- cast.flight=shownFlight||arcFlight(from,destination,opponents,curve,cast.side)
-  ||arcFlight(from,destination,opponents,curve*.7,cast.side)
-  ||arcFlight(from,destination,opponents,curve*.45,cast.side);
+ const passAim=abilityKickAim(player,{x:dx/distance,y:dy/distance},false,()=>cast.aimRoll,.0015);
+ const landing={
+  x:Math.max(.15,Math.min(field.width-.15,from.x+passAim.x*distance)),
+  y:Math.max(.15,Math.min(field.height-.15,from.y+passAim.y*distance))
+ };
+ const speed=abilityKickSpeed(player,19,false);
+ cast.flight=shownFlight||arcFlight(from,landing,opponents,curve,cast.side,speed)
+  ||arcFlight(from,landing,opponents,curve*.7,cast.side,speed)
+  ||arcFlight(from,landing,opponents,curve*.45,cast.side,speed);
  if(!cast.target)return cmd.usePower?{text:'Swerve armed',handled:false}:null;
  if(!cmd.passReleased)return {handled:true};
  sim.arcCast=null;
@@ -563,15 +668,14 @@ function tickArcPass(sim,player,cmd,upgrades){
  SoundDB.play('lob');
  return {text:'Swerve Pass',handled:true};
 }
-function usePower(sim,player,cmd,upgrades){
- const power=CLASSIC_POWERS[player.characterId];
+function usePower(sim,player,cmd,upgrades,power=CLASSIC_POWERS[player.characterId]){
  if(!power)return 'This player has no special power';
  const unavailable=powerUnavailable(sim,player,power);
  if(unavailable)return unavailable;
  const origin={x:player.x,y:player.y};
  let result;
- if(player.characterId==='price'){
-  if(player.team==='A'&&sim.bargeCharge)return 'Orc Barge in progress';
+ if(power.icon==='barge'){
+  if(player.team==='A'&&sim.bargeCharge)return 'Barge in progress';
   result=charge(sim,player,cmd,upgrades);
  }
  else{
@@ -598,4 +702,4 @@ function usePower(sim,player,cmd,upgrades){
  }
  return result;
 }
-module.exports={ARC_BEND_TICKS,POWERS,TELE_PASS,SPIN_KICK,SPIN_RADIUS,SPIN_DURATION,characterPower,usePower,tickArcPass,tickSpacePower,updateTelePass,clearGoalWarp,GOAL_WARP,goalWarpTarget,RECRUIT_POWERS,bargeReach,bargeDirection,clearBargeCharge,updateBargeCharge};
+module.exports={portalAim,DRUID_FORMS,STARTER_POWER_POOLS,launchBlastShot,ARC_BEND_TICKS,POWERS,TELE_PASS,SPIN_KICK,SPIN_RADIUS,SPIN_DURATION,characterPower,usePower,tickArcPass,tickSpacePower,updateTelePass,clearGoalWarp,GOAL_WARP,goalWarpTarget,RECRUIT_POWERS,bargeReach,bargeDirection,clearBargeCharge,updateBargeCharge};

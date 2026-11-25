@@ -8,7 +8,7 @@ const BASH_RANGE=10;
 const BASH_SPEED=24;
 const WINDUP=.4;
 
-function updateOrcBrothers(sim){
+function updateHordeFC(sim){
  const carrier=sim.ball.owner;
  const orcs=sim.teamB.getOutfieldPlayers().filter(player=>player.isOrc);
  if(sim.matchState!=='play'||sim.setPieceType){
@@ -25,7 +25,7 @@ function updateOrcBrothers(sim){
  const {width,height}=Utils.getFieldBounds();
  for(const [i,orc] of orcs.entries()){
   if(orc.bargeOpeningAt==null)orc.bargeOpeningAt=Time.time+.65+i;
-  if(orc.actionTimer>0||orc.smokeBlind||orc.burningUntil>Time.time||orc.isSliding||Time.time<Math.max(orc.powerReadyAt,orc.bargeOpeningAt))continue;
+  if(orc.actionTimer>0||orc.burningUntil>Time.time||orc.isSliding||Time.time<Math.max(orc.powerReadyAt,orc.bargeOpeningAt))continue;
   const distance=Math.hypot(target.x-orc.x,target.y-orc.y);
   if(distance<.45||distance>BASH_RANGE)continue;
   const dx=(target.x-orc.x)/distance,dy=(target.y-orc.y)/distance;
@@ -39,7 +39,7 @@ function updateOrcBrothers(sim){
 }
 function stepBash(sim,orc,target){
  const bash=orc.bargeWindup;
- if(orc.actionTimer>0||orc.smokeBlind||orc.burningUntil>Time.time||sim.ball.owner===orc){
+ if(orc.actionTimer>0||orc.burningUntil>Time.time||sim.ball.owner===orc){
   orc.bargeWindup=null;
   orc.powerReadyAt=Time.time+.65;
   return;
@@ -65,4 +65,4 @@ function stepBash(sim,orc,target){
  orc.powerReadyAt=Time.time+orc.powerCooldown;
  applyActionLock(orc,.45);
 }
-module.exports={updateOrcBrothers};
+module.exports={updateHordeFC};

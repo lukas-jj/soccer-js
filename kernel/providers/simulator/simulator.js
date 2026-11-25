@@ -3556,11 +3556,12 @@ class Simulator extends GameObject {
         // Soft net settle owns the ball after a goal is already awarded
         if (this.matchState === 'goal') return;
         const { left: leftGoal, right: rightGoal } = this.getGoals();
+        const onCrossbar = this.onCrossbarHit;
         if (leftGoal && typeof leftGoal.resolveBallCollisions === 'function') {
-            leftGoal.resolveBallCollisions(this.ball);
+            leftGoal.resolveBallCollisions(this.ball, onCrossbar);
         }
         if (rightGoal && typeof rightGoal.resolveBallCollisions === 'function') {
-            rightGoal.resolveBallCollisions(this.ball);
+            rightGoal.resolveBallCollisions(this.ball, onCrossbar);
         }
     }
 

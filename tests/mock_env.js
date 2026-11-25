@@ -119,16 +119,14 @@ function createPixelCanvas(initialWidth = 96, initialHeight = 96) {
                 destH = dh;
             }
 
+            const source = img.getContext?.('2d');
+            const sourceData = source?._data;
+            const sourceWidth = source?._width;
+            const sourceHeight = source?._height;
             const getSrcPixel = (x, y) => {
-                if (img.getContext) {
-                    const sctx = img.getContext('2d');
-                    const sdata = sctx._data;
-                    const sw = sctx._width;
-                    if (x < 0 || y < 0 || x >= sw || y >= sctx._height) return [0, 0, 0, 0];
-                    const idx = (sw * y + x) << 2;
-                    return [sdata[idx], sdata[idx + 1], sdata[idx + 2], sdata[idx + 3]];
-                }
-                return [0, 0, 0, 0];
+                if (!sourceData || x < 0 || y < 0 || x >= sourceWidth || y >= sourceHeight) return [0, 0, 0, 0];
+                const idx = (sourceWidth * y + x) << 2;
+                return [sourceData[idx], sourceData[idx + 1], sourceData[idx + 2], sourceData[idx + 3]];
             };
 
             for (let y = 0; y < destH; y++) {

@@ -18,13 +18,14 @@ const ADVANTAGE_WINDOW_SEC = 2.5;
  * Axis-aligned penalty area for the goal on `side` ('left' | 'right').
  * @param {'left'|'right'} side
  * @param {{ width: number, height: number }|null} [field]
+ * @param {(value: number) => number} [scaleY] Scale used by the pitch markings.
  * @returns {{ xMin: number, xMax: number, yMin: number, yMax: number, side: string }}
  */
-function getPenaltyArea(side, field = null) {
+function getPenaltyArea(side, field = null, scaleY = Utils.scaleFieldY) {
     const f = field || Utils.getFieldBounds();
     const s = (v) => Utils.scaleFieldX(v);
-    const yMin = Utils.scaleFieldY(BOX_Y_MIN_REF);
-    const yMax = Utils.scaleFieldY(BOX_Y_MAX_REF);
+    const yMin = scaleY(BOX_Y_MIN_REF);
+    const yMax = scaleY(BOX_Y_MAX_REF);
     const depth = s(BOX_DEPTH_REF);
     if (side === 'right') {
         return { xMin: f.width - depth, xMax: f.width, yMin, yMax, side: 'right' };

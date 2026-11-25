@@ -28,6 +28,7 @@ const WAV_BASE_REL = 'assets/sounds/';
 
 /** Default gain per one-shot (master multiplies). */
 const SFX_GAIN = {
+    clock_tick: 0.12,
     whistle: 0.22,
     whistle_long: 0.24,
     whistle_end: 0.26,
@@ -475,6 +476,10 @@ const SoundDB = {
         const g = gain;
 
         switch (name) {
+            case 'clock_tick':
+                this._osc('triangle', 510 * r, t0, 0.085, g, 365 * r);
+                break;
+
             case 'whistle':
                 // Single short peep (kickoff / set-piece resume / foul)
                 this._osc('sine', 880 * r, t0, 0.14, g, 900 * r);
@@ -505,6 +510,13 @@ const SoundDB = {
             case 'call_pass':
                 this._osc('triangle', 520 * r, t0, 0.085, g, 610 * r);
                 this._osc('triangle', 740 * r, t0 + 0.09, 0.11, g, 660 * r);
+                break;
+
+            case 'bard':
+                [392, 494, 587, 784].forEach((note, index) => {
+                    this._osc('triangle', note * r, t0 + .24 + index * .13, .22, g * .44);
+                });
+                this._osc('sine', 196 * r, t0 + .24, .7, g * .23);
                 break;
 
             case 'shot':

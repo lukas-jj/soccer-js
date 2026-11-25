@@ -207,6 +207,7 @@ function registerOutfieldStates(PlayerStates, d) {
         isTeammateOpen,
         computeShootKick,
         applyKickDirectionNoise,
+        applyManualAimAccuracy,
         estimatePassGroundSpeed,
         longPassVzForDistance,
         pursuitPoint,
@@ -294,7 +295,11 @@ function registerOutfieldStates(PlayerStates, d) {
         }
 
         ball.kick(nx * speed, ny * speed, vz, curve);
-        if (asShot) ball.isShot = true;
+        if (asShot) {
+            ball.lastKicker = p;
+            ball.isShot = true;
+            p.level.onShot?.(p);
+        }
         SoundDB.play('header');
         p.humanHeader = null;
     }
@@ -789,7 +794,18 @@ function registerOutfieldStates(PlayerStates, d) {
                 const attacksRight = attacksRightGoal(p.level, p.team);
                 const targetGoalX = attacksRight ? field.width : 0;
                 const distToGoal = Math.abs(p.x - targetGoalX);
-                if (distToGoal < getShootRange(p)) {
+                const shootRange = getShootRange(p);
+                const longShot = p.longShotProfile;
+                if (longShot && distToGoal >= shootRange && !p.level.setPieceType) {
+                    const goals = p.level.getGoals?.();
+                    const goalY = (attacksRight ? goals?.right : goals?.left)?.center?.y ?? field.centerY;
+                    if (Math.hypot(distToGoal, p.y - goalY) <= longShot.range && Math.random() < longShot.chance) {
+                        p.shotAim = { x: targetGoalX, y: goalY };
+                        p.fsm.changeState(PlayerStates.Shoot);
+                        return;
+                    }
+                }
+                if (distToGoal < shootRange) {
                     // A.3: phase shoot willingness (build rarely pulls the trigger)
                     const team = getTeamEntity(p);
                     const phaseMods = team && typeof team.getPlayPhaseMods === 'function'
@@ -977,7 +993,10 @@ function registerOutfieldStates(PlayerStates, d) {
                             // Accuracy cone (shared kick-noise helper). Boundary set-pieces use a
                             // tighter cone — large angle error near the line re-triggers OOB.
                             const direct = p.humanKick?.directAim ? p.humanKick.aimDir : null;
-                            const noisyPass = direct ? {nx:direct.x,ny:direct.y} : applyKickDirectionNoise(nx, ny, p.effectiveAccuracy || 70, {
+                            const accuracy = p.effectivePassAccuracy ?? p.effectiveAccuracy ?? 70;
+                            const noisyPass = direct
+                                ? applyManualAimAccuracy(p, direct.x, direct.y, accuracy)
+                                : applyKickDirectionNoise(nx, ny, accuracy, {
                                 angleScale: (isThrowIn || isCorner) ? 0.0035 : 0.0075,
                                 playmaker: !!(p.traits && p.traits.includes('Playmaker'))
                             });
@@ -1058,7 +1077,7 @@ function registerOutfieldStates(PlayerStates, d) {
                                         : 0;
                                     ball.kick(devNx * speed, devNy * speed, vz, curve);
                                 } else {
-                                    ball.kick(devNx * speed, devNy * speed, 0, 0);
+                                    ball.kickGroundPass(devNx * speed, devNy * speed);
                                 }
                                 // Boundary grace for corners (same flag as throw-in flight)
                                 if (isCorner) {
@@ -1170,6 +1189,7 @@ function registerOutfieldStates(PlayerStates, d) {
 
                         ball.kick(kick.nx * kick.speed, kick.ny * kick.speed, kick.heightSpeed, kick.curveForce);
                         ball.isShot = true;
+                        p.level.onShot?.(p);
                         // A.6: wall jumps on kick release (not on Shoot enter)
                         if (isFreekick) {
                             if (p.level.setPieceIndirect) {
@@ -1228,7 +1248,7 @@ function registerOutfieldStates(PlayerStates, d) {
                     const xyOk = dist2d(p.x, p.y, ball.x, ball.y) < (bending ? 1 : 1.9);
                     const bz = ball.z || 0;
                     const zOk = bz >= 0.55 && bz < 2.15;
-                    if (!p.isHeading && ball.owner === null && xyOk && zOk) {
+                    if (!p.isHeading && ball.owner === null && !ball.passRoute?.teamCross && !ball.pierceOpponent && xyOk && zOk) {
                         p.isHeading = true;
                         if (bending && p.team !== arc.wizard.team) {
                             p.level.arcAssist = null;

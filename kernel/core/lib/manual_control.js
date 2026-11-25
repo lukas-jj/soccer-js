@@ -36,6 +36,7 @@ const {
     takeChargeContact
 } = require('./manual_commands.js');
 const {
+    applyManualAimAccuracy,
     findHeaderOpportunity,
     isBallAirborne
 } = require('./ball_prediction.js');
@@ -506,6 +507,9 @@ function fallbackKickAlongFacing(player, isLob, humanKick, cmd, charge) {
         ? humanFacingDir(player, { moveX: hk.aimDir.x, moveY: hk.aimDir.y }, charge)
         : humanFacingDir(player, cmd, charge);
 
+    const { nx, ny } = applyManualAimAccuracy(player, dir.x, dir.y, player.effectivePassAccuracy);
+    dir = { x: nx, y: ny };
+
     const level = player.level;
     const isThrow = level.setPieceType === 'throwin';
     const isCorner = level.setPieceType === 'corner';
@@ -570,7 +574,8 @@ function fallbackKickAlongFacing(player, isLob, humanKick, cmd, charge) {
     const curve = hk && typeof hk.curveForce === 'number' ? hk.curveForce : 0;
     if (isThrow) vz = 2.5;
     if (isCorner) vz = Math.max(4, vz);
-    ball.kick(dir.x * speed, dir.y * speed, vz, curve);
+    if (!isLob && !vz) ball.kickGroundPass(dir.x * speed, dir.y * speed, curve);
+    else ball.kick(dir.x * speed, dir.y * speed, vz, curve);
     if (isThrow || isCorner) {
         ball.isThrowInFlight = true;
         level._setPieceBallSpot = null;
@@ -614,18 +619,24 @@ function aimAssistFlags() {
 /**
  * Hold-power options from settings.
  */
-function holdPowerOpts() {
+function holdPowerOpts(groundPass = false) {
     const mc = manualOpts();
     return {
-        minSec: typeof mc.holdPowerMinSec === 'number' ? mc.holdPowerMinSec : 0.05,
+        minSec: groundPass ? 0.1 : (mc.holdPowerMinSec ?? 0.05),
         maxSec: typeof mc.holdPowerMaxSec === 'number' ? mc.holdPowerMaxSec : 0.6,
-        tapFloor: typeof mc.holdPowerTapFloor === 'number' ? mc.holdPowerTapFloor : 0.28
+        tapFloor: groundPass ? 0 : (mc.holdPowerTapFloor ?? 0.28)
     };
+}
+
+function isOpenPlayGroundPass(sim, action) {
+    return action === 'pass' && sim?.drivenGroundPasses && !sim.setPieceType;
 }
 
 function getManualChargePower(sim) {
     const charge = getManualCharge(sim);
-    return charge ? holdPower01(charge.ticks, holdPowerOpts()) : 0;
+    if (!charge) return 0;
+    const groundPass = !charge.header && isOpenPlayGroundPass(sim, charge.action);
+    return holdPower01(charge.ticks, holdPowerOpts(groundPass));
 }
 
 /**
@@ -751,12 +762,13 @@ function startHumanShoot(player, cmd, humanKick, charge) {
         player.humanKick = { kind: 'shoot', aimDir: { x: aimDir.x, y: aimDir.y } };
     }
 
-    if (cmd?.directPointerAim) {
+    const directShot = cmd?.directPointerAim;
+    if (directShot) {
         player.humanKick.directAim = true;
         player.humanKick.curveForce = 0;
     }
 
-    const assist = !cmd?.directPointerAim && aimAssistFlags().shoot
+    const assist = !directShot && aimAssistFlags().shoot
         && !(humanKick && humanKick.aimAssist === false);
 
     // Default: directional aim along stick toward goal
@@ -814,7 +826,9 @@ function fireChargedAction(player, action, charge, cmd, sim, teamKey) {
     if (!player || !action) return player;
     if (charge) updateChargeAim(charge, player, cmd);
 
-    const power = holdPower01(charge ? charge.ticks : 1, holdPowerOpts());
+    const groundPass = isOpenPlayGroundPass(sim, action);
+    const power = holdPower01(charge ? charge.ticks : 1, holdPowerOpts(groundPass));
+    const tap = groundPass && power === 0;
     const bias = charge && typeof charge.curveBias === 'number' ? charge.curveBias : 0;
     const facing = humanFacingDir(player, cmd, charge);
     // Curl: lateral of stick vs sticky aim (small stick bias while holding)
@@ -853,12 +867,14 @@ function fireChargedAction(player, action, charge, cmd, sim, teamKey) {
     const hk = buildHumanPassKick({
         power,
         isLob,
-        curveBias,
+        curveBias: tap ? 0 : curveBias,
         shooting,
-        aimAssist: assist
+        aimAssist: assist && !tap
     });
     hk.aimDir = { x: facing.x, y: facing.y };
-    if (!isLob && sim?.drivenGroundPasses) {
+    if (groundPass) {
+        hk.speedMul = 0.32 + 1.08 * power;
+    } else if (!isLob && sim?.drivenGroundPasses) {
         hk.speedMul = 1.05 + 0.35 * power;
     }
     const receiver = startHumanPass(player, isLob ? 'long' : 'short', cmd, hk, charge);
@@ -1269,7 +1285,9 @@ function applyHumanCommand(player, cmd, sim, teamKey) {
     // Switch always available (even mid-kick for responsiveness)
     if (cmd.switchPlayer) {
         clearManualCharge(sim);
-        const next = switchControlledPlayer(sim, teamKey, player);
+        const next = sim.manualDefensiveSwitch
+            ? resolveControlledPlayer(sim, teamKey, null)
+            : switchControlledPlayer(sim, teamKey, player);
         if (next && next !== player) {
             player.humanControlled = false;
             player._humanInput = null;
@@ -1699,7 +1717,9 @@ function tickManualControl(sim, opts = {}) {
         }
     }
 
-    if (sim.manualKeeper) {
+    if (sim.teamCross) {
+        controlled = sim.teamCross.receiver;
+    } else if (sim.manualKeeper) {
         if (cmd.switchPlayer || sim.ball.owner?.team === 'A') sim.manualKeeperSelected = false;
         if (cmd.switchKeeper && sim.ball.owner?.team !== 'A') {
             const keeper = sim.teamA.getGoalkeeper(true);

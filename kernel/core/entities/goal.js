@@ -300,7 +300,7 @@ class Goal extends GameObject {
      * @param {{ x:number,y:number,z?:number,vx:number,vy:number,vz:number,radius?:number,owner?:object|null,prevX?:number,prevY?:number,prevZ?:number }} ball
      * @returns {boolean} true if any contact was resolved
      */
-    resolveBallCollisions(ball) {
+    resolveBallCollisions(ball, onCrossbar) {
         if (!ball || ball.owner) return false;
 
         const r = typeof ball.radius === 'number' ? ball.radius : 0.11;
@@ -308,7 +308,7 @@ class Goal extends GameObject {
 
         hit = this._collidePost(ball, this.yMin, r) || hit;
         hit = this._collidePost(ball, this.yMax, r) || hit;
-        hit = this._collideCrossbar(ball, r) || hit;
+        hit = this._collideCrossbar(ball, r, onCrossbar) || hit;
         hit = this._collideExteriorCage(ball, r) || hit;
         // Do NOT eject balls already past the line without scored(): OOB / set-piece
         // handling in Simulator.checkBallCollisions owns those (wide of posts →
@@ -340,13 +340,44 @@ class Goal extends GameObject {
         return true;
     }
 
+    // Test the flight segment before end-line boards reflect a fast shot.
+    resolveSweptCrossbar(ball, previous, onCrossbar) {
+        const radius = GOAL_POST_RADIUS + ball.radius;
+        const x = previous.prevX - this.lineX;
+        const z = (previous.prevZ ?? 0) - this.height;
+        const dx = ball.x - previous.prevX;
+        const dz = ball.z - (previous.prevZ ?? 0);
+        const a = dx * dx + dz * dz;
+        const b = x * dx + z * dz;
+        const c = x * x + z * z - radius * radius;
+        const discriminant = b * b - a * c;
+        if (a <= 0 || b >= 0 || discriminant <= 0) return false;
+        const t = (-b - Math.sqrt(discriminant)) / a;
+        if (t < 0 || t > 1) return false;
+        const y = previous.prevY + (ball.y - previous.prevY) * t;
+        if (y < this.yMin || y > this.yMax) return false;
+
+        const nx = (x + dx * t) / radius;
+        const nz = (z + dz * t) / radius;
+        const vn = ball.vx * nx + (ball.vz || 0) * nz;
+        if (vn >= 0) return false;
+        ball.x = this.lineX + nx * (radius + 1e-6);
+        ball.y = y;
+        ball.z = this.height + nz * (radius + 1e-6);
+        ball.vx = (ball.vx - (1 + GOAL_FRAME_RESTITUTION) * vn * nx) * GOAL_FRAME_TANGENT_DAMP;
+        ball.vy *= GOAL_FRAME_TANGENT_DAMP;
+        ball.vz = ((ball.vz || 0) - (1 + GOAL_FRAME_RESTITUTION) * vn * nz) * GOAL_FRAME_TANGENT_DAMP;
+        onCrossbar?.(this, ball);
+        return true;
+    }
+
     /**
      * Crossbar along y at (lineX, z=height).
      * @param {object} ball
      * @param {number} ballR
      * @private
      */
-    _collideCrossbar(ball, ballR) {
+    _collideCrossbar(ball, ballR, onCrossbar) {
         const z = ball.z || 0;
         const barR = GOAL_POST_RADIUS;
         const minD = barR + ballR;
@@ -375,6 +406,7 @@ class Goal extends GameObject {
             ball.vx -= (1 + GOAL_FRAME_RESTITUTION) * vn * nx;
             ball.vy -= (1 + GOAL_FRAME_RESTITUTION) * vn * ny;
             ball.vz = (ball.vz || 0) - (1 + GOAL_FRAME_RESTITUTION) * vn * nz;
+            onCrossbar?.(this, ball);
         }
         ball.vx *= GOAL_FRAME_TANGENT_DAMP;
         ball.vy *= GOAL_FRAME_TANGENT_DAMP;

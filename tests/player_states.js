@@ -84,6 +84,29 @@ async function main() {
     assert.ok(speedCarry < speedLoose, `carrier topSpeed lower (${speedCarry} < ${speedLoose})`);
     log('PASS moveTo applies with-ball speed cap');
 
+    const movement = (speed, dribblingSpeed, carrying) => {
+        Object.assign(p.stats, { speed, dribblingSpeed });
+        Object.assign(p, { x: 20, y: 25, _currentSpeed: 0, currentStamina: 1 });
+        sim.ball.owner = carrying ? p : null;
+        applyGlobalPlayerState(p);
+        p.moveTo({ x: 40, y: 25 });
+        const accelerationStep = p._currentSpeed;
+        p._currentSpeed = 100;
+        p.moveTo({ x: 40, y: 25 });
+        return { accelerationStep, topSpeed: p._currentSpeed };
+    };
+    const originalStats = { ...p.stats };
+    const slowRun = movement(1, 1, false);
+    const fastRun = movement(99, 1, false);
+    assert.ok(fastRun.accelerationStep > slowRun.accelerationStep && fastRun.topSpeed > slowRun.topSpeed);
+    assert.deepStrictEqual(movement(1, 99, false), slowRun, 'Dribbling Speed has no effect off the ball');
+    const slowCarry = movement(1, 1, true);
+    const fastCarry = movement(1, 99, true);
+    assert.ok(fastCarry.accelerationStep > slowCarry.accelerationStep && fastCarry.topSpeed > slowCarry.topSpeed);
+    assert.deepStrictEqual(movement(99, 1, true), slowCarry, 'Speed has no effect on the ball');
+    Object.assign(p.stats, originalStats);
+
+
     // --- Idle promotes designated supporter ---
     const carrier = sim.teamA.getOutfieldPlayers()[1] || p;
     const mate = sim.teamA.getOutfieldPlayers().find(x => x !== carrier);

@@ -22,6 +22,7 @@ const {
 const {
     futurePosition,
     applyKickDirectionNoise,
+    applyManualAimAccuracy,
     sampleKickCurveForce,
     longPassVzForDistance,
     isBallAirborne,
@@ -693,25 +694,46 @@ function scorePassTarget(carrier, teammate, dist, open) {
     return score;
 }
 
+function activeBeastForm(player) {
+    return player.beastUntil > Time.time ? player.beastForm : null;
+}
+
+function temporaryMovementMultiplier(player) {
+    const wolf = activeBeastForm(player) === 'wolf' ? 1.25 : 1;
+    const nutmeg = player.nutmegBoostUntil > Time.time ? 1.5 : 1;
+    return wolf * nutmeg;
+}
+
 function computeShootKick(carrier) {
     const field = Utils.getFieldBounds();
     const attacksRight = attacksRightGoal(carrier.level, carrier.team);
     let targetGoalX = attacksRight ? field.width : 0;
     let targetGoalY;
+    const eagle = activeBeastForm(carrier) === 'eagle';
+    const goals = eagle ? carrier.level.getGoals() : null;
+    const goal = goals && (attacksRight ? goals.right : goals.left);
+    const ball = carrier.level.ball;
 
     // Prefer CanShoot sample (safe goal-mouth point) when set on the player
-    if (carrier.shotAim && typeof carrier.shotAim.x === 'number' && typeof carrier.shotAim.y === 'number') {
+    if (goal) {
+        const opponents = carrier.team === 'A' ? carrier.level.teamB : carrier.level.teamA;
+        const keeper = opponents.getGoalkeeper();
+        const referenceY = keeper?.y ?? ball.y;
+        const inset = Math.min(.65, (goal.yMax - goal.yMin) / 4);
+        targetGoalX = goal.lineX;
+        targetGoalY = referenceY <= goal.center.y ? goal.yMax - inset : goal.yMin + inset;
+    } else if (carrier.shotAim && typeof carrier.shotAim.x === 'number' && typeof carrier.shotAim.y === 'number') {
         targetGoalX = carrier.shotAim.x;
         targetGoalY = carrier.shotAim.y;
     } else {
         // Better shooters aim closer to the corners
-        const shootQuality = ((carrier.effectiveShooting || 65) + (carrier.effectiveAccuracy || 70)) / 200.0;
+        const shootQuality = ((carrier.effectiveShooting || 65) + (carrier.effectiveShotAccuracy ?? carrier.effectiveAccuracy ?? 70)) / 200.0;
         const sideFactor = Math.random() < 0.5 ? -1 : 1;
         targetGoalY = field.centerY + sideFactor * Utils.scaleFieldY(shootQuality * 6.75 + (1.0 - shootQuality) * (Math.random() * 2.5));
     }
 
-    const dx = targetGoalX - carrier.x;
-    const dy = targetGoalY - carrier.y;
+    const dx = targetGoalX - (eagle ? ball.x : carrier.x);
+    const dy = targetGoalY - (eagle ? ball.y : carrier.y);
     const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
 
     // Shot ground speed from Settings.physics (m/s)
@@ -719,7 +741,8 @@ function computeShootKick(carrier) {
     const shootBase = typeof phys.SHOOT_SPEED_BASE === 'number' ? phys.SHOOT_SPEED_BASE : 11.0;
     const shootScale = typeof phys.SHOOT_SPEED_STAT_SCALE === 'number' ? phys.SHOOT_SPEED_STAT_SCALE : 6.0;
     const shooting = carrier.effectiveShooting || 65;
-    let speed = shootBase + (shooting / 100.0) * shootScale;
+    const shotProfile = !carrier.humanControlled && carrier.longShotProfile;
+    let speed = (shootBase + (shooting / 100.0) * shootScale) * (shotProfile?.speedMultiplier ?? 1);
     const closeRange = Utils.scaleFieldX(18.75);
     // A.6: freekick chip-over wall uses heightSpeed from canShootPastWall
     const hNearMin = typeof phys.SHOOT_HEIGHT_NEAR_MIN === 'number' ? phys.SHOOT_HEIGHT_NEAR_MIN : 0.5;
@@ -747,10 +770,13 @@ function computeShootKick(carrier) {
     const nx = dx / dist;
     const ny = dy / dist;
     // Shared kick-noise helper — tighter cone on shots so more stay on frame (arcade)
-    const shotAngleScale = (Settings.AI && typeof Settings.AI.SHOOT_ANGLE_NOISE_SCALE === 'number')
-        ? Settings.AI.SHOOT_ANGLE_NOISE_SCALE
-        : 0.0055;
-    const noisy = hk?.directAim ? {nx:hk.aimDir.x,ny:hk.aimDir.y} : applyKickDirectionNoise(nx, ny, carrier.effectiveAccuracy || 70, {
+    const configuredAngleNoise = Settings.AI?.SHOOT_ANGLE_NOISE_SCALE;
+    const shotAngleScale = shotProfile?.angleNoise
+        ?? (typeof configuredAngleNoise === 'number' ? configuredAngleNoise : 0.0055);
+    const shotAccuracy = carrier.effectiveShotAccuracy ?? carrier.effectiveAccuracy ?? 70;
+    const noisy = eagle ? applyKickDirectionNoise(nx, ny, shotAccuracy, {angleScale: 0.002}) : hk?.directAim
+        ? applyManualAimAccuracy(carrier, hk.aimDir.x, hk.aimDir.y, shotAccuracy)
+        : applyKickDirectionNoise(nx, ny, shotAccuracy, {
         angleScale: shotAngleScale
     });
     let curveForce = sampleKickCurveForce(carrier.effectiveShooting || 65);
@@ -771,7 +797,7 @@ function computeShootKick(carrier) {
         ny: noisy.ny,
         speed,
         heightSpeed,
-        curveForce,
+        curveForce: eagle ? 0 : curveForce,
         dist
     };
 }
@@ -796,7 +822,7 @@ function estimatePlayerTopSpeed(player) {
         ? player.staminaMultiplier
         : (player.currentStamina != null ? player.currentStamina : 1);
     const speedBonus = (baseStats / 100.0) * bonusMax * stam;
-    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1) * (player.movementScale ?? 1) * (player.movementEffectScale ?? 1) * (player.smokeBoostUntil > Time.time ? 1.65 : 1);
+    return (base + speedBonus) * (Settings.SPRITE_SPEED || 1) * (player.movementScale ?? 1) * (player.movementEffectScale ?? 1) * temporaryMovementMultiplier(player);
 }
 
 function computeLooseBallInterceptTarget(chaser, ball) {
@@ -868,8 +894,9 @@ function computeLooseBallInterceptTarget(chaser, ball) {
 }
 
 function tryClaimLooseBall(player, ball) {
-    if (!ball || ball.owner !== null) return false;
-    if (!canClaimAfterKick(player)) return false;
+    if (!ball || ball.claimable === false || ball.owner !== null || ball.passRoute?.teamCross || ball.pierceOpponent) return false;
+    if (ball.isShot && ball.onShotBlock && ball.lastKicker?.team !== player.team) return false;
+    if (ball.nutmeg?.some(({ defender }) => defender === player) || !canClaimAfterKick(player)) return false;
 
     // Players cannot claim a loose ball that is out of bounds
     const field = Utils.getFieldBounds();
@@ -1187,7 +1214,7 @@ function grantGkPossession(gk, ball, options = {}) {
 
 function canTackleOwner(owner) {
     if (!owner) return true;
-    if (isGkProtected(owner)) return false;
+    if (isGkProtected(owner) || activeBeastForm(owner) === 'bear') return false;
     if (owner.level && owner.level.setPieceType) return false;
     return true;
 }
@@ -1230,7 +1257,7 @@ function applyGlobalPlayerState(player) {
  */
 function maybeTriggerTackleFoul(tackler, opponent, tackleType, a, opts = {}) {
     const level = tackler && tackler.level;
-    if (!level || level.practice || typeof level.triggerFoul !== 'function') return false;
+    if (!level || level.practice || level.allowTackleFouls === false || typeof level.triggerFoul !== 'function') return false;
 
     let foulChance = 0;
     if (opts.forceChance != null) {
@@ -1388,6 +1415,7 @@ initPlayerStates({
     isTeammateOpen,
     computeShootKick,
     applyKickDirectionNoise,
+    applyManualAimAccuracy,
     estimatePassGroundSpeed,
     longPassVzForDistance,
     pursuitPoint,
@@ -1410,7 +1438,7 @@ class Player extends GameObject {
         super(name);
         this.team = team;
         this.role = role;
-        this.stats = stats;
+        this.stats = { ...stats, dribblingSpeed: stats.dribblingSpeed ?? stats.speed ?? 60 };
         this.traits = stats.traits || [];
         this.baseX = 0;
         this.baseY = 0;
@@ -1507,7 +1535,8 @@ class Player extends GameObject {
         const teamName = this.team === 'A' ? this.level.teamAName : this.level.teamBName;
         const jerseyKey = `player_${teamName}_jersey_${this.jersey}`;
         const fallbackKey = `player_${teamName}_${this.role === 'GK' ? 'gk' : 'main'}`;
-        const sheet = ImageDB.get(jerseyKey) || ImageDB.get(fallbackKey);
+        const sheets = this.level.playerSheets ?? ImageDB;
+        const sheet = sheets.get(jerseyKey) || sheets.get(fallbackKey);
         if (sheet) {
             this._cachedSpriteSheet = sheet;
         }
@@ -1524,6 +1553,18 @@ class Player extends GameObject {
 
     get effectiveShooting() {
         return (this.stats.shooting || 65) * this.staminaMultiplier;
+    }
+
+    get effectiveShotAccuracy() {
+        const accuracy = this.stats.shotAccuracy;
+        if (accuracy == null) return this.effectiveAccuracy;
+        return accuracy === 100 ? 100 : accuracy * this.staminaMultiplier;
+    }
+
+    get effectivePassAccuracy() {
+        const accuracy = this.stats.passAccuracy;
+        if (accuracy == null) return this.effectiveAccuracy;
+        return accuracy === 100 ? 100 : accuracy * this.staminaMultiplier;
     }
 
     get effectiveAccuracy() {
@@ -1860,6 +1901,13 @@ class Player extends GameObject {
     moveTo(target, speedMultiplier = 1, steerOpts = null) {
         if (!target || this.slimeWindup || this.bargeWindup || this.bargeCharging) return;
 
+        const bounds = this.role === 'GK' ? this.level?.getKeeperBounds?.(this) : null;
+        if (bounds) {
+            target = {
+                x: Math.max(bounds.xMin, Math.min(bounds.xMax, target.x)),
+                y: Math.max(bounds.yMin, Math.min(bounds.yMax, target.y))
+            };
+        }
         let aimX = target.x;
         let aimY = target.y;
         let speedScale = 1;
@@ -1892,13 +1940,18 @@ class Player extends GameObject {
             }
         }
 
+        if (bounds) {
+            aimX = Math.max(bounds.xMin, Math.min(bounds.xMax, aimX));
+            aimY = Math.max(bounds.yMin, Math.min(bounds.yMax, aimY));
+        }
         const dx = aimX - this.x;
         const dy = aimY - this.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist > 0.1) {
             // Settings.physics locomotion (m/s). Stamina only scales the stat bonus.
-            const baseStats = this.stats.speed || 60;
+            const hasBall = this.level?.ball?.owner === this;
+            const baseStats = (hasBall ? this.stats.dribblingSpeed : this.stats.speed) ?? 60;
             const phys = (Settings && Settings.physics) || {};
             const pBase = typeof phys.PLAYER_BASE_SPEED === 'number' ? phys.PLAYER_BASE_SPEED : 4.6;
             const pBonus = typeof phys.PLAYER_SPEED_STAT_BONUS === 'number' ? phys.PLAYER_SPEED_STAT_BONUS : 3.4;
@@ -1909,7 +1962,7 @@ class Player extends GameObject {
             const possessionMul = (typeof this._possessionSpeedMul === 'number')
                 ? this._possessionSpeedMul
                 : globalPossessionSpeedMul(this);
-            const movementSpeed = Settings.SPRITE_SPEED * (this.movementScale ?? 1) * (this.movementEffectScale ?? 1) * (this.smokeBoostUntil > Time.time ? 1.65 : 1);
+            const movementSpeed = Settings.SPRITE_SPEED * (this.movementScale ?? 1) * (this.movementEffectScale ?? 1) * temporaryMovementMultiplier(this);
             const topSpeed = (pBase + speedBonus) * movementSpeed
                 * speedMultiplier * speedScale * possessionMul;
             let acceleration = (aBase + (baseStats / 100.0) * aBonus * this.staminaMultiplier) * movementSpeed;
@@ -2057,7 +2110,7 @@ class Player extends GameObject {
     }
 
     update() {
-        if (this.isSentOff) return;
+        if (this.isSentOff || (this.team === 'B' && this.level?.trainingEnemiesFrozen)) return;
         if (this.tackleAttemptCooldown > 0) {
             this.tackleAttemptCooldown -= Time.deltaTime;
             if (this.tackleAttemptCooldown < 0) this.tackleAttemptCooldown = 0;
@@ -2227,7 +2280,9 @@ class Player extends GameObject {
         }
 
         if (this.level?.moveHazardPlayer?.(this)) return;
+        const startX = this.x, startY = this.y;
         this.fsm.update();
+        this.level?.applyGroundTraction?.(this, startX, startY);
 
         // Clamp player to field boundaries to prevent walking freely along/outside the sidelines
         const field = Utils.getFieldBounds();
@@ -2278,6 +2333,9 @@ class Player extends GameObject {
         if (this.isSentOff) return;
         const metrics = Utils.getSpriteDrawMetrics();
         const m = metrics.multiplier;
+        const body = this.mimicPlayer?.body ?? this.body;
+        const tileW = metrics.tileW * (body?.width ?? 1);
+        const tileH = metrics.tileH * (body?.height ?? 1);
         const srcW = Settings.SPRITE_TILE_W;
         const srcH = Settings.SPRITE_TILE_H;
 
@@ -2288,20 +2346,66 @@ class Player extends GameObject {
 
         const screenX = screen.x;
         const screenY = screen.y;
+        const spriteTop = screenY + metrics.feetScreenYOffset - tileH;
 
         const spriteSheet = this.getSpriteSheet();
 
         if (spriteSheet) {
-            const sx = this.frame * srcW;
-            const sy = this.orientation * srcH;
+            const overhead = this.overheadPose;
+            const followThrough = overhead?.facing && Time.time < overhead.started + overhead.duration;
+            const stepover = this.stepoverPose;
+            const step = stepover && this.level?.ball?.owner === this
+                ? (Time.time - stepover.started) / .48 : 1;
+            const finish = this.teamFinishPose;
+            const strike = finish ? (Time.time - finish.started) / .32 : 1;
+            let frame = followThrough ? 3 : this.frame;
+            let orientation = this.orientation;
+            if (step < 1) {
+                // Plant, swing the kicking leg across the ball, then land on the other side.
+                frame = step < .18 ? 1 : step < .71 ? 3 : 2;
+                const turn = step < .38 ? -1 : step < .78 ? 1 : 0;
+                orientation = (stepover.orientation + turn + 8) % 8;
+                const facing = (stepover.orientation - 2) * Math.PI / 4;
+                const across = -Math.sin(step * 2 * Math.PI) * .42;
+                const forward = Math.sin(step * Math.PI) * .22;
+                const lift = Math.sin(step * Math.PI) * .23;
+                const pose = Utils.toScreen(
+                    this.x + Math.cos(facing) * forward - Math.sin(facing) * across,
+                    this.y + Math.sin(facing) * forward + Math.cos(facing) * across,
+                    zVal + lift
+                );
+                g.save();
+                g.translate(pose.x - screenX, pose.y - screenY);
+            } else if (strike < 1) {
+                frame = finish.header ? (strike < .5 ? 10 : 11) : 3;
+                const lift = finish.header ? Math.sin(Math.PI * strike) * .85 : 0;
+                g.save();
+                g.translate(0, Utils.toScreen(this.x, this.y, zVal + lift).y - screenY);
+            }
+            const sx = frame * srcW;
+            const sy = orientation * srcH;
+            if (followThrough) {
+                const { facing, started, duration } = overhead;
+                const progress = Math.max(0, (Time.time - started) / duration);
+                const pose = Math.sin(Math.PI * progress ** 0.55);
+                const ahead = Utils.toScreen(this.x + facing.x, this.y + facing.y, zVal);
+                const lean = Math.sign(ahead.x - screenX) || Math.sign(ahead.y - screenY);
+                const pivotY = screenY - tileH * 0.35;
+                g.save();
+                g.translate(screenX, pivotY - pose * tileH * 0.17);
+                g.rotate(-lean * pose * 1.5);
+                g.translate(-screenX, -pivotY);
+            }
             g.drawImage(
                 spriteSheet,
                 sx, sy, srcW, srcH,
-                Math.floor(screenX - metrics.anchorOffsetX),
-                Math.floor(screenY - metrics.anchorOffsetY),
-                metrics.tileW,
-                metrics.tileH
+                Math.floor(screenX - tileW / 2),
+                Math.floor(spriteTop),
+                tileW,
+                tileH
             );
+            if (followThrough) g.restore();
+            if (step < 1 || strike < 1) g.restore();
         }
 
         if (Settings.showFPS) {
@@ -2310,13 +2414,13 @@ class Player extends GameObject {
             g.shadowColor = '#000000';
             g.shadowBlur = 2 * m;
             g.textAlign = 'center';
-            g.fillText(this.name, screenX, screenY - metrics.anchorOffsetY - 2 * m);
+            g.fillText(this.name, screenX, spriteTop - 2 * m);
             g.shadowBlur = 0;
         }
     }
 }
 
-module.exports = {
+module.exports = { activeBeastForm,
     Player,
     ai,
     PlayerStates,
